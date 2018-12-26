@@ -11,12 +11,13 @@
 #endif
 
 static const int kWidth = 800;
-static const int kHeight = 600;
+static const int kHeight = 576;
 static const float kFrameWidth = 43.0833321f;
 static const float kFrameHeight = 45.1250000f;
 
 using BomberState = enum { STAND, DOWN, UP, LEFT, RIGHT };
 using MapSprites = std::map<BomberState, std::vector<float>>;
+using Map = std::vector<std::vector<int>>;
 
 static const MapSprites mapSprites = {
 	{STAND, {1 * kFrameWidth}},
@@ -24,6 +25,27 @@ static const MapSprites mapSprites = {
 	{UP, {9 * kFrameWidth, 10 * kFrameWidth, 11 * kFrameWidth}},
 	{LEFT, {6 * kFrameWidth, 7 * kFrameWidth, 8 * kFrameWidth}},
 	{RIGHT, {3 * kFrameWidth, 4 * kFrameWidth, 5 * kFrameWidth}},
+};
+
+static const Map level1 = {
+    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+    {0, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 0},
+    {0, 8, 0, 8, 0, 8, 0, 8, 0, 8, 0, 8, 0, 8, 0, 8, 0, 8, 0, 8, 0, 8, 0, 8, 0},
+    {0, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 0},
+    {0, 8, 0, 8, 0, 8, 0, 8, 0, 8, 0, 8, 0, 8, 0, 8, 0, 8, 0, 8, 0, 8, 0, 8, 0},
+    {0, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 0},
+    {0, 8, 0, 8, 0, 8, 0, 8, 0, 8, 0, 8, 0, 8, 0, 8, 0, 8, 0, 8, 0, 8, 0, 8, 0},
+    {0, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 0},
+    {0, 8, 0, 8, 0, 8, 0, 8, 0, 8, 0, 8, 0, 8, 0, 8, 0, 8, 0, 8, 0, 8, 0, 8, 0},
+    {0, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 0},
+    {0, 8, 0, 8, 0, 8, 0, 8, 0, 8, 0, 8, 0, 8, 0, 8, 0, 8, 0, 8, 0, 8, 0, 8, 0},
+    {0, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 0},
+    {0, 8, 0, 8, 0, 8, 0, 8, 0, 8, 0, 8, 0, 8, 0, 8, 0, 8, 0, 8, 0, 8, 0, 8, 0},
+    {0, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 0},
+    {0, 8, 0, 8, 0, 8, 0, 8, 0, 8, 0, 8, 0, 8, 0, 8, 0, 8, 0, 8, 0, 8, 0, 8, 0},
+    {0, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 0},
+    {0, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 0},
+    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
 };
 
 void print(Rectangle &rect)
@@ -95,18 +117,33 @@ void updateFrame(Frame &bomberFrame, BomberState &state, BomberState &lastState)
     }
 }
 
+void drawTiles(Texture2D &wall, const Map &level)
+{
+    int cols = 25;
+    int rows = 18;
+    float w = 32.f;
+    for (int i = 0; i < rows; ++i)
+    {
+        for (int j = 0; j < cols; ++j)
+        {
+            int l = level[i][j];
+            if (l >= 8) continue;
+            float x = l * w + 1.f;
+            Rectangle r = {1.f, 1.f, w, w};
+            DrawTextureRec(wall, r, {j * w, i * w}, WHITE);
+        }
+    }
+}
+
 int main()
 {
 	InitWindow(kWidth, kHeight, "Bomberman");
 	SetTargetFPS(60);
 	Texture2D bomberman = LoadTexture("resources/images/arena_bomber_walk.png");
+	Texture2D wall = LoadTexture("resources/images/arena_wall.png");
 	BomberState state = BomberState::STAND;
 	BomberState lastState = BomberState::STAND;
-    Frame bomberFrame = {
-	    { 0.0f, 0.0f, mapSprites.at(state)[0], kFrameHeight },
-        0,
-        13,
-        0,
+    Frame bomberFrame = { { 0.0f, 0.0f, mapSprites.at(state)[0], kFrameHeight }, 0, 13, 0,
         1
     };
 	Vector2 position = { (float)kWidth / 2.f, (float)kHeight / 2.f };
@@ -115,7 +152,8 @@ int main()
 	while (!WindowShouldClose())
 	{
 		BeginDrawing();
-		ClearBackground(MAGENTA);
+		ClearBackground(GREEN);
+        drawTiles(wall, level1);
         direction = {0.f, 0.f};
 		state = BomberState::STAND;
         onKeyDown(state, lastState, direction, speed);
