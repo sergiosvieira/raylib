@@ -95,9 +95,8 @@ void updateFrame(Frame &bomberFrame, BomberState &state, BomberState &lastState)
     if (state == BomberState::STAND) 
     {
         if (lastState == BomberState::STAND) bomberFrame.stand = 0;
-        else bomberFrame.stand = 1;
+        else bomberFrame.stand = 4;
         bomberFrame.rect.x = mapSprites.at(lastState)[bomberFrame.stand];
-        //std::cout << "[Standing]\n";
     }            
     if (bomberFrame.counter >= (60 / bomberFrame.speed) 
             && state != BomberState::STAND)
@@ -143,7 +142,7 @@ int main()
 	Texture2D wall = LoadTexture("resources/images/arena_wall.png");
 	BomberState state = BomberState::STAND;
 	BomberState lastState = BomberState::STAND;
-    Frame bomberFrame = { { 0.0f, 0.0f, mapSprites.at(state)[0], kFrameHeight }, 0, 13, 0,
+    Frame bomberFrame = { { mapSprites.at(state)[0], 0.0f, kFrameWidth, kFrameHeight }, 0, 13, 0,
         1
     };
 	Vector2 position = { (float)kWidth / 2.f, (float)kHeight / 2.f };
