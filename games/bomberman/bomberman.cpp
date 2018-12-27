@@ -95,9 +95,8 @@ void updateFrame(Frame &bomberFrame, BomberState &state, BomberState &lastState)
     if (state == BomberState::STAND) 
     {
         if (lastState == BomberState::STAND) bomberFrame.stand = 0;
-        else bomberFrame.stand = 1;
+        else bomberFrame.stand = 4;
         bomberFrame.rect.x = mapSprites.at(lastState)[bomberFrame.stand];
-        //std::cout << "[Standing]\n";
     }            
     if (bomberFrame.counter >= (60 / bomberFrame.speed) 
             && state != BomberState::STAND)
