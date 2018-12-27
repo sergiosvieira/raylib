@@ -12,19 +12,19 @@
 
 static const int kWidth = 800;
 static const int kHeight = 576;
-static const float kFrameWidth = 43.0833321f;
-static const float kFrameHeight = 45.1250000f;
+static const float kFrameWidth = 64.f;
+static const float kFrameHeight = 96.f;
 
 using BomberState = enum { STAND, DOWN, UP, LEFT, RIGHT };
 using MapSprites = std::map<BomberState, std::vector<float>>;
 using Map = std::vector<std::vector<int>>;
 
 static const MapSprites mapSprites = {
-	{STAND, {1 * kFrameWidth}},
-	{DOWN, {0, 1 * kFrameWidth, 2 * kFrameWidth}},
-	{UP, {9 * kFrameWidth, 10 * kFrameWidth, 11 * kFrameWidth}},
-	{LEFT, {6 * kFrameWidth, 7 * kFrameWidth, 8 * kFrameWidth}},
-	{RIGHT, {3 * kFrameWidth, 4 * kFrameWidth, 5 * kFrameWidth}},
+	{STAND, {3 * kFrameWidth}},
+	{DOWN, {0, 1 * kFrameWidth, 2 * kFrameWidth, 3 * kFrameWidth, 4 * kFrameWidth, 5 * kFrameWidth, 6 * kFrameWidth, 7 * kFrameWidth}},
+	{UP, {24 * kFrameWidth, 25 * kFrameWidth, 26 * kFrameWidth, 27 * kFrameWidth, 28 * kFrameWidth, 29 * kFrameWidth, 30 * kFrameWidth, 31 * kFrameWidth}},
+	{LEFT, {16 * kFrameWidth, 17 * kFrameWidth, 18 * kFrameWidth, 19 * kFrameWidth, 20 * kFrameWidth, 21 * kFrameWidth, 22 * kFrameWidth, 23 * kFrameWidth}},
+	{RIGHT, {8 * kFrameWidth, 9 * kFrameWidth, 10 * kFrameWidth, 11 * kFrameWidth, 12 * kFrameWidth, 13 * kFrameWidth, 14 * kFrameWidth, 15 * kFrameWidth}},
 };
 
 static const Map level1 = {
