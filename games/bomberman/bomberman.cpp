@@ -143,7 +143,7 @@ int main()
 	Texture2D wall = LoadTexture("resources/images/arena_wall.png");
 	BomberState state = BomberState::STAND;
 	BomberState lastState = BomberState::STAND;
-    Frame bomberFrame = { { 0.0f, 0.0f, mapSprites.at(state)[0], kFrameHeight }, 0, 13, 0,
+    Frame bomberFrame = { { mapSprites.at(state)[0], 0.0f, kFrameWidth, kFrameHeight }, 0, 13, 0,
         1
     };
 	Vector2 position = { (float)kWidth / 2.f, (float)kHeight / 2.f };
