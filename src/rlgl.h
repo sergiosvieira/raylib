@@ -165,14 +165,6 @@ typedef unsigned char byte;
         unsigned char a;
     } Color;
 
-    // Rectangle type
-    typedef struct Rectangle {
-        int x;
-        int y;
-        int width;
-        int height;
-    } Rectangle;
-
     // Texture2D type
     // NOTE: Data stored in GPU memory
     typedef struct Texture2D {
@@ -435,7 +427,7 @@ void rlglClose(void);                           // De-inititialize rlgl (buffers
 void rlglDraw(void);                            // Update and draw default internal buffers
 
 int rlGetVersion(void);                         // Returns current OpenGL version
-bool rlCheckBufferLimit(int type, int vCount);  // Check internal buffer overflow for a given number of vertex
+bool rlCheckBufferLimit(int vCount);            // Check internal buffer overflow for a given number of vertex
 void rlSetDebugMarker(const char *text);        // Set debug marker for analysis
 void rlLoadExtensions(void *loader);            // Load OpenGL extensions
 Vector3 rlUnproject(Vector3 source, Matrix proj, Matrix view);  // Get world coordinates from screen coordinates
@@ -703,9 +695,9 @@ typedef struct DrawCall {
 typedef struct VrStereoConfig {
     RenderTexture2D stereoFbo;  // VR stereo rendering framebuffer
     Shader distortionShader;    // VR stereo rendering distortion shader
-    Rectangle eyesViewport[2];  // VR stereo rendering eyes viewports
     Matrix eyesProjection[2];   // VR stereo rendering eyes projection matrices
     Matrix eyesViewOffset[2];   // VR stereo rendering eyes view offset matrices
+    int eyesViewport[2][4];     // VR stereo rendering eyes viewports [x, y, w, h]
 } VrStereoConfig;
 #endif
 
@@ -1110,7 +1102,8 @@ void rlEnd(void)
     // processed but are placed in a single point to not result in a fragment output...
     // TODO: System could be improved (a bit) just storing every draw alignment value
     // and adding it to vertexOffset on drawing... maybe in a future...
-    int vertexToAlign = draws[drawsCounter - 1].vertexCount%4;
+    int vertexCount = draws[drawsCounter - 1].vertexCount;
+    int vertexToAlign = (vertexCount >= 4) ? vertexCount%4 : (4 - vertexCount%4);
     for (int i = 0; i < vertexToAlign; i++) rlVertex3f(-1, -1, -1);
 
     // Make sure vertexCount is the same for vertices, texcoords, colors and normals
@@ -1153,7 +1146,7 @@ void rlEnd(void)
 
     // Verify internal buffers limits
     // NOTE: This check is combined with usage of rlCheckBufferLimit()
-    if ((vertexData[currentBuffer].vCounter/4) >= (MAX_BATCH_ELEMENTS - 4))
+    if ((vertexData[currentBuffer].vCounter) >= (MAX_BATCH_ELEMENTS*4 - 4))
     {
         // WARNING: If we are between rlPushMatrix() and rlPopMatrix() and we need to force a rlglDraw(),
         // we need to call rlPopMatrix() before to recover *currentMatrix (modelview) for the next forced draw call!
@@ -1173,7 +1166,7 @@ void rlVertex3f(float x, float y, float z)
     if (useTransformMatrix) vec = Vector3Transform(vec, transformMatrix);
     
     // Verify that MAX_BATCH_ELEMENTS limit not reached
-    if (vertexData[currentBuffer].vCounter/4 < MAX_BATCH_ELEMENTS)
+    if (vertexData[currentBuffer].vCounter < (MAX_BATCH_ELEMENTS*4))
     {
         vertexData[currentBuffer].vertices[3*vertexData[currentBuffer].vCounter] = vec.x;
         vertexData[currentBuffer].vertices[3*vertexData[currentBuffer].vCounter + 1] = vec.y;
@@ -1270,7 +1263,7 @@ void rlDisableTexture(void)
 #else
     // NOTE: If quads batch limit is reached,
     // we force a draw call and next batch starts
-    if (vertexData[currentBuffer].vCounter/4 >= MAX_BATCH_ELEMENTS) rlglDraw();
+    if (vertexData[currentBuffer].vCounter >= (MAX_BATCH_ELEMENTS*4)) rlglDraw();
 #endif
 }
 
@@ -1476,10 +1469,10 @@ void rlglInit(int width, int height)
     //for (int i = 0; i < numComp; i++) TraceLog(LOG_INFO, "Supported compressed format: 0x%x", format[i]);
 
     // NOTE: We don't need that much data on screen... right now...
-
-#if defined(GRAPHICS_API_OPENGL_11)
-    //TraceLog(LOG_INFO, "OpenGL 1.1 (or driver default) profile initialized");
-#endif
+    
+    // TODO: Automatize extensions loading using rlLoadExtensions() and GLAD
+    // Actually, when rlglInit() is called in InitWindow() in core.c,
+    // OpenGL required extensions have already been loaded (PLATFORM_DESKTOP)
 
 #if defined(GRAPHICS_API_OPENGL_33) || defined(GRAPHICS_API_OPENGL_ES2)
     // Get supported extensions list
@@ -1560,7 +1553,6 @@ void rlglInit(int width, int height)
         // Check texture float support
         if (strcmp(extList[i], (const char *)"GL_OES_texture_float") == 0) texFloatSupported = true;
 #endif
-
         // DDS texture compression support
         if ((strcmp(extList[i], (const char *)"GL_EXT_texture_compression_s3tc") == 0) ||
             (strcmp(extList[i], (const char *)"GL_WEBGL_compressed_texture_s3tc") == 0) ||
@@ -1616,6 +1608,8 @@ void rlglInit(int width, int height)
 
     if (debugMarkerSupported) TraceLog(LOG_INFO, "[EXTENSION] Debug Marker supported");
 
+    
+    
     // Initialize buffers, default shaders and default textures
     //----------------------------------------------------------
 
@@ -1738,11 +1732,11 @@ int rlGetVersion(void)
 }
 
 // Check internal buffer overflow for a given number of vertex
-bool rlCheckBufferLimit(int type, int vCount)
+bool rlCheckBufferLimit(int vCount)
 {
     bool overflow = false;
 #if defined(GRAPHICS_API_OPENGL_33) || defined(GRAPHICS_API_OPENGL_ES2)
-    if ((vertexData[currentBuffer].vCounter + vCount)/4 >= MAX_BATCH_ELEMENTS) overflow = true;
+    if ((vertexData[currentBuffer].vCounter + vCount) >= (MAX_BATCH_ELEMENTS*4)) overflow = true;
 #endif
     return overflow;
 }
@@ -2975,7 +2969,7 @@ Matrix GetMatrixModelview()
 Texture2D GenTextureCubemap(Shader shader, Texture2D skyHDR, int size)
 {
     Texture2D cubemap = { 0 };
-#if defined(GRAPHICS_API_OPENGL_33) // || defined(GRAPHICS_API_OPENGL_ES2)
+#if defined(GRAPHICS_API_OPENGL_33) || defined(GRAPHICS_API_OPENGL_ES2)
     // NOTE: SetShaderDefaultLocations() already setups locations for projection and view Matrix in shader
     // Other locations should be setup externally in shader before calling the function
 
@@ -2985,22 +2979,31 @@ Texture2D GenTextureCubemap(Shader shader, Texture2D skyHDR, int size)
     glEnable(GL_TEXTURE_CUBE_MAP_SEAMLESS);     // Flag not supported on OpenGL ES 2.0
 #endif
 
-
     // Setup framebuffer
     unsigned int fbo, rbo;
     glGenFramebuffers(1, &fbo);
     glGenRenderbuffers(1, &rbo);
     glBindFramebuffer(GL_FRAMEBUFFER, fbo);
     glBindRenderbuffer(GL_RENDERBUFFER, rbo);
+#if defined(GRAPHICS_API_OPENGL_33)
     glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, size, size);
+#elif defined(GRAPHICS_API_OPENGL_ES2)
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT16, size, size);
+#endif
     glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, rbo);
 
     // Set up cubemap to render and attach to framebuffer
     // NOTE: faces are stored with 16 bit floating point values
     glGenTextures(1, &cubemap.id);
     glBindTexture(GL_TEXTURE_CUBE_MAP, cubemap.id);
-    for (unsigned int i = 0; i < 6; i++)
-        glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, GL_RGB16F, size, size, 0, GL_RGB, GL_FLOAT, NULL);
+    for (unsigned int i = 0; i < 6; i++) 
+    {
+#if defined(GRAPHICS_API_OPENGL_33)
+        glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, GL_RGB32F, size, size, 0, GL_RGB, GL_FLOAT, NULL);
+#elif defined(GRAPHICS_API_OPENGL_ES2)
+        if (texFloatSupported) glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, GL_RGB, size, size, 0, GL_RGB, GL_FLOAT, NULL);
+#endif
+    }
     glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 #if defined(GRAPHICS_API_OPENGL_33)
@@ -3011,7 +3014,6 @@ Texture2D GenTextureCubemap(Shader shader, Texture2D skyHDR, int size)
 
     // Create projection (transposed) and different views for each face
     Matrix fboProjection = MatrixPerspective(90.0*DEG2RAD, 1.0, 0.01, 1000.0);
-    //MatrixTranspose(&fboProjection);
     Matrix fboViews[6] = {
         MatrixLookAt((Vector3){ 0.0f, 0.0f, 0.0f }, (Vector3){ 1.0f, 0.0f, 0.0f }, (Vector3){ 0.0f, -1.0f, 0.0f }),
         MatrixLookAt((Vector3){ 0.0f, 0.0f, 0.0f }, (Vector3){ -1.0f, 0.0f, 0.0f }, (Vector3){ 0.0f, -1.0f, 0.0f }),
@@ -3084,7 +3086,6 @@ Texture2D GenTextureIrradiance(Shader shader, Texture2D cubemap, int size)
 
     // Create projection (transposed) and different views for each face
     Matrix fboProjection = MatrixPerspective(90.0*DEG2RAD, 1.0, 0.01, 1000.0);
-    //MatrixTranspose(&fboProjection);
     Matrix fboViews[6] = {
         MatrixLookAt((Vector3){ 0.0f, 0.0f, 0.0f }, (Vector3){ 1.0f, 0.0f, 0.0f }, (Vector3){ 0.0f, -1.0f, 0.0f }),
         MatrixLookAt((Vector3){ 0.0f, 0.0f, 0.0f }, (Vector3){ -1.0f, 0.0f, 0.0f }, (Vector3){ 0.0f, -1.0f, 0.0f }),
@@ -3161,7 +3162,6 @@ Texture2D GenTexturePrefilter(Shader shader, Texture2D cubemap, int size)
 
     // Create projection (transposed) and different views for each face
     Matrix fboProjection = MatrixPerspective(90.0*DEG2RAD, 1.0, 0.01, 1000.0);
-    //MatrixTranspose(&fboProjection);
     Matrix fboViews[6] = {
         MatrixLookAt((Vector3){ 0.0f, 0.0f, 0.0f }, (Vector3){ 1.0f, 0.0f, 0.0f }, (Vector3){ 0.0f, -1.0f, 0.0f }),
         MatrixLookAt((Vector3){ 0.0f, 0.0f, 0.0f }, (Vector3){ -1.0f, 0.0f, 0.0f }, (Vector3){ 0.0f, -1.0f, 0.0f }),
@@ -4268,8 +4268,8 @@ static void SetStereoConfig(VrDeviceInfo hmd)
     vrConfig.eyesViewOffset[1] = MatrixTranslate(hmd.interpupillaryDistance*0.5f, 0.075f, 0.045f);
 
     // Compute eyes Viewports
-    vrConfig.eyesViewport[0] = (Rectangle){ 0.0f, 0.0f, (float)hmd.hResolution/2, (float)hmd.vResolution };
-    vrConfig.eyesViewport[1] = (Rectangle){ hmd.hResolution/2.0f, 0.0f, (float)hmd.hResolution/2, (float) hmd.vResolution };
+    //vrConfig.eyesViewport[0] = { 0.0f, 0.0f, (float)hmd.hResolution/2, (float)hmd.vResolution };
+    //vrConfig.eyesViewport[1] = { hmd.hResolution/2.0f, 0.0f, (float)hmd.hResolution/2, (float) hmd.vResolution };
 }
 
 // Set internal projection and modelview matrix depending on eyes tracking data
