@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 2.6)
-project(bomberman)
+project(bomberguy)
 set (CMAKE_CXX_STANDARD 11)
 # Executable & linking
-add_executable(${PROJECT_NAME} bomberman.cpp)
+add_executable(${PROJECT_NAME} bomberguy.cpp)
 if (NOT TARGET raylib)
   find_package(raylib 2.0 REQUIRED)
 endif()
