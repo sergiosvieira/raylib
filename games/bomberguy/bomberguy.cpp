@@ -1,6 +1,4 @@
-﻿// bomberman.cpp : Este arquivo contém a função 'main'. A execução do programa começa e termina ali.
-//
-
+﻿
 #include <iostream>
 #include <map>
 #include <vector>
@@ -12,7 +10,7 @@
 #include <emscripten/emscripten.h>
 #endif
 
-static const int kWindowWidth = 800;
+static const int kWindowWidth = 832;
 static const int kWindowHeight = 576;
 static const float kFrameWidth = 64.f;
 static const float kFrameHeight = 96.f;
@@ -21,6 +19,8 @@ static const short kTiles = 4;
 static const int kFrameRate = 40;
 static const float kTileSize = 64.f;
 static const bool kDebug = false; 
+static const int kCols = 13;
+static const int kRows = 9;
 
 using BomberState = enum {STAND, DOWN, UP, LEFT, RIGHT};
 using VectorOfFloat = std::vector<float>;
@@ -47,9 +47,6 @@ static const SpriteSheetMap spriteSheet = {
 	{LEFT, makeSpriteSheet(16, 8, kTileSize)},
 	{RIGHT, makeSpriteSheet(8, 8, kTileSize)} 
 };
-
-static const int kCols = 13;
-static const int kRows = 9;
 
 static const Map level1 = 
 {
@@ -94,27 +91,6 @@ bool collides(Rectangle &r1, Rectangle &r2)
     bool c = r1.y < r2.y + r2.height;
     bool d = r1.y + r1.height > r2.y;
     return a && b && c && d;
-}
-
-Rectangle makeTile(const Vector2 &position)
-{
-    Rectangle result = {0.f, 0.f, kTileSize, kTileSize};
-    result.x = floor(position.x / kTileSize) * kTileSize;
-    result.y = floor(position.y / kTileSize) * kTileSize;
-    return result;
-}
-
-void DrawCollideTile(Rectangle &p, Rectangle &r)
-{
-    if (kDebug)
-    {
-        Color c = YELLOW;
-        if (collides(p, r))
-        {
-            c = RED;
-        }
-        DrawRectangleRec(r, c);
-    }
 }
 
 bool MapCollides(Vector2 &p, const Map &level)
