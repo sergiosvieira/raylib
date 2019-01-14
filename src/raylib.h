@@ -415,6 +415,7 @@ typedef enum {
     FLAG_WINDOW_RESIZABLE   = 4,    // Set to allow resizable window
     FLAG_WINDOW_UNDECORATED = 8,    // Set to disable window decoration (frame and buttons)
     FLAG_WINDOW_TRANSPARENT = 16,   // Set to allow transparent window
+    FLAG_WINDOW_HIDDEN      = 128,  // Set to create the window initially hidden
     FLAG_MSAA_4X_HINT       = 32,   // Set to try enabling MSAA 4X
     FLAG_VSYNC_HINT         = 64    // Set to try enabling V-Sync on GPU
 } ConfigFlag;
@@ -676,6 +677,19 @@ typedef enum {
 #define LOC_MAP_DIFFUSE      LOC_MAP_ALBEDO
 #define LOC_MAP_SPECULAR     LOC_MAP_METALNESS
 
+// Shader uniform data types
+typedef enum {
+    UNIFORM_FLOAT = 0,
+    UNIFORM_VEC2,
+    UNIFORM_VEC3,
+    UNIFORM_VEC4,
+    UNIFORM_INT,
+    UNIFORM_IVEC2,
+    UNIFORM_IVEC3,
+    UNIFORM_IVEC4,
+    UNIFORM_SAMPLER2D
+} ShaderUniformDataType;
+
 // Material map type
 typedef enum {
     MAP_ALBEDO    = 0,       // MAP_DIFFUSE
@@ -820,20 +834,23 @@ extern "C" {            // Prevents name mangling of functions
 
 // Window-related functions
 RLAPI void InitWindow(int width, int height, const char *title);  // Initialize window and OpenGL context
+RLAPI bool WindowShouldClose(void);                               // Check if KEY_ESCAPE pressed or Close icon pressed
 RLAPI void CloseWindow(void);                                     // Close window and unload OpenGL context
 RLAPI bool IsWindowReady(void);                                   // Check if window has been initialized successfully
-RLAPI bool WindowShouldClose(void);                               // Check if KEY_ESCAPE pressed or Close icon pressed
 RLAPI bool IsWindowMinimized(void);                               // Check if window has been minimized (or lost focus)
+RLAPI bool IsWindowHidden(void);                                  // Check if window is currently hidden
 RLAPI void ToggleFullscreen(void);                                // Toggle fullscreen mode (only PLATFORM_DESKTOP)
+RLAPI void ShowWindow(void);                                      // Show the window
+RLAPI void HideWindow(void);                                      // Hide the window
 RLAPI void SetWindowIcon(Image image);                            // Set icon for window (only PLATFORM_DESKTOP)
 RLAPI void SetWindowTitle(const char *title);                     // Set title for window (only PLATFORM_DESKTOP)
 RLAPI void SetWindowPosition(int x, int y);                       // Set window position on screen (only PLATFORM_DESKTOP)
 RLAPI void SetWindowMonitor(int monitor);                         // Set monitor for the current window (fullscreen mode)
 RLAPI void SetWindowMinSize(int width, int height);               // Set window minimum dimensions (for FLAG_WINDOW_RESIZABLE)
 RLAPI void SetWindowSize(int width, int height);                  // Set window dimensions
+RLAPI void *GetWindowHandle(void);                                // Get native window handle
 RLAPI int GetScreenWidth(void);                                   // Get current screen width
 RLAPI int GetScreenHeight(void);                                  // Get current screen height
-RLAPI void *GetWindowHandle(void);                                // Get native window handle
 RLAPI int GetMonitorCount(void);                                  // Get number of connected monitors
 RLAPI int GetMonitorWidth(int monitor);                           // Get primary monitor width
 RLAPI int GetMonitorHeight(int monitor);                          // Get primary monitor height
@@ -878,7 +895,6 @@ RLAPI Color GetColor(int hexValue);                               // Returns a C
 RLAPI Color Fade(Color color, float alpha);                       // Color fade-in or fade-out, alpha goes from 0.0f to 1.0f
 
 // Misc. functions
-RLAPI void ShowLogo(void);                                        // Activate raylib logo at startup (can be done with flags)
 RLAPI void SetConfigFlags(unsigned char flags);                   // Setup window configuration flags (view FLAGS)
 RLAPI void SetTraceLog(unsigned char types);                      // Enable trace log message types (bit flags based)
 RLAPI void SetTraceLogCallback(TraceLogCallback callback);        // Set a trace log callback to enable custom logging bypassing raylib's one
@@ -940,8 +956,9 @@ RLAPI bool IsMouseButtonUp(int button);                       // Detect if a mou
 RLAPI int GetMouseX(void);                                    // Returns mouse position X
 RLAPI int GetMouseY(void);                                    // Returns mouse position Y
 RLAPI Vector2 GetMousePosition(void);                         // Returns mouse position XY
-RLAPI void SetMousePosition(Vector2 position);                // Set mouse position XY
-RLAPI void SetMouseScale(float scale);                        // Set mouse scaling
+RLAPI void SetMousePosition(int x, int y);                    // Set mouse position XY
+RLAPI void SetMouseOffset(int offsetX, int offsetY);          // Set mouse offset
+RLAPI void SetMouseScale(float scaleX, float scaleY);         // Set mouse scaling
 RLAPI int GetMouseWheelMove(void);                            // Returns mouse wheel movement Y
 
 // Input-related functions: touch
@@ -1110,7 +1127,8 @@ RLAPI void UnloadFont(Font font);                                               
 // Text drawing functions
 RLAPI void DrawFPS(int posX, int posY);                                                     // Shows current FPS
 RLAPI void DrawText(const char *text, int posX, int posY, int fontSize, Color color);       // Draw text (using default font)
-RLAPI void DrawTextEx(Font font, const char *text, Vector2 position, float fontSize, float spacing, Color tint); // Draw text using font and additional parameters
+RLAPI void DrawTextEx(Font font, const char *text, Vector2 position, float fontSize, float spacing, Color tint);                // Draw text using font and additional parameters
+RLAPI void DrawTextRec(Font font, const char *text, Rectangle rec, float fontSize, float spacing, bool wordWrap, Color tint);   // Draw text using font inside rectangle limits
 
 // Text misc. functions
 RLAPI int MeasureText(const char *text, int fontSize);                                      // Measure string width for default font
@@ -1228,8 +1246,8 @@ RLAPI Texture2D GetTextureDefault(void);                                  // Get
 
 // Shader configuration functions
 RLAPI int GetShaderLocation(Shader shader, const char *uniformName);              // Get shader uniform location
-RLAPI void SetShaderValue(Shader shader, int uniformLoc, const float *value, int size); // Set shader uniform value (float)
-RLAPI void SetShaderValuei(Shader shader, int uniformLoc, const int *value, int size);  // Set shader uniform value (int)
+RLAPI void SetShaderValue(Shader shader, int uniformLoc, const void *value, int uniformType);               // Set shader uniform value
+RLAPI void SetShaderValueV(Shader shader, int uniformLoc, const void *value, int uniformType, int count);   // Set shader uniform value vector
 RLAPI void SetShaderValueMatrix(Shader shader, int uniformLoc, Matrix mat);       // Set shader uniform value (matrix 4x4)
 RLAPI void SetMatrixProjection(Matrix proj);                              // Set a custom projection matrix (replaces internal projection matrix)
 RLAPI void SetMatrixModelview(Matrix view);                               // Set a custom modelview matrix (replaces internal modelview matrix)
@@ -1240,7 +1258,7 @@ RLAPI Matrix GetMatrixModelview();                                        // Get
 RLAPI Texture2D GenTextureCubemap(Shader shader, Texture2D skyHDR, int size);       // Generate cubemap texture from HDR texture
 RLAPI Texture2D GenTextureIrradiance(Shader shader, Texture2D cubemap, int size);   // Generate irradiance texture using cubemap data
 RLAPI Texture2D GenTexturePrefilter(Shader shader, Texture2D cubemap, int size);    // Generate prefilter texture using cubemap data
-RLAPI Texture2D GenTextureBRDF(Shader shader, Texture2D cubemap, int size);         // Generate BRDF texture using cubemap data
+RLAPI Texture2D GenTextureBRDF(Shader shader, int size);                  // Generate BRDF texture using cubemap data
 
 // Shading begin/end functions
 RLAPI void BeginShaderMode(Shader shader);                                // Begin custom shader drawing

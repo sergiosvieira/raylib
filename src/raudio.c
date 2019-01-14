@@ -12,7 +12,7 @@
 *
 *   CONFIGURATION:
 *
-*   #define AUDIO_STANDALONE
+*   #define RAUDIO_STANDALONE
 *       Define to use the module as standalone library (independently of raylib).
 *       Required types and functions are defined in the same module.
 *
@@ -70,8 +70,8 @@
 *
 **********************************************************************************************/
 
-#if defined(AUDIO_STANDALONE)
-    #include "audio.h"
+#if defined(RAUDIO_STANDALONE)
+    #include "raudio.h"
     #include <stdarg.h>         // Required for: va_list, va_start(), vfprintf(), va_end()
 #else
     #include "raylib.h"         // Declares module functions
@@ -169,7 +169,7 @@ typedef struct MusicData {
     unsigned int samplesLeft;           // Number of samples left to end
 } MusicData;
 
-#if defined(AUDIO_STANDALONE)
+#if defined(RAUDIO_STANDALONE)
 typedef enum {
     LOG_INFO = 0,
     LOG_ERROR,
@@ -201,7 +201,7 @@ static Wave LoadFLAC(const char *fileName);             // Load FLAC file
 static Wave LoadMP3(const char *fileName);              // Load MP3 file
 #endif
 
-#if defined(AUDIO_STANDALONE)
+#if defined(RAUDIO_STANDALONE)
 bool IsFileExtension(const char *fileName, const char *ext);    // Check file extension
 void TraceLog(int msgType, const char *text, ...);              // Show trace log messages (LOG_INFO, LOG_WARNING, LOG_ERROR, LOG_DEBUG)
 #endif
@@ -1219,6 +1219,8 @@ Music LoadMusicStream(const char *fileName)
 // Unload music stream
 void UnloadMusicStream(Music music)
 {
+    if (music == NULL) return;
+    
     CloseAudioStream(music->stream);
 
     if (music->ctxType == MUSIC_AUDIO_OGG) stb_vorbis_close(music->ctxOgg);
@@ -1241,41 +1243,46 @@ void UnloadMusicStream(Music music)
 // Start music playing (open stream)
 void PlayMusicStream(Music music)
 {
-    AudioBuffer *audioBuffer = (AudioBuffer *)music->stream.audioBuffer;
-
-    if (audioBuffer == NULL)
+    if (music != NULL)
     {
-        TraceLog(LOG_ERROR, "PlayMusicStream() : No audio buffer");
-        return;
+        AudioBuffer *audioBuffer = (AudioBuffer *)music->stream.audioBuffer;
+
+        if (audioBuffer == NULL)
+        {
+            TraceLog(LOG_ERROR, "PlayMusicStream() : No audio buffer");
+            return;
+        }
+
+        // For music streams, we need to make sure we maintain the frame cursor position. This is hack for this section of code in UpdateMusicStream()
+        //     // NOTE: In case window is minimized, music stream is stopped,
+        //     // just make sure to play again on window restore
+        //     if (IsMusicPlaying(music)) PlayMusicStream(music);
+        mal_uint32 frameCursorPos = audioBuffer->frameCursorPos;
+
+        PlayAudioStream(music->stream); // <-- This resets the cursor position.
+
+        audioBuffer->frameCursorPos = frameCursorPos;
     }
-
-    // For music streams, we need to make sure we maintain the frame cursor position. This is hack for this section of code in UpdateMusicStream()
-    //     // NOTE: In case window is minimized, music stream is stopped,
-    //     // just make sure to play again on window restore
-    //     if (IsMusicPlaying(music)) PlayMusicStream(music);
-    mal_uint32 frameCursorPos = audioBuffer->frameCursorPos;
-
-    PlayAudioStream(music->stream); // <-- This resets the cursor position.
-
-    audioBuffer->frameCursorPos = frameCursorPos;
 }
 
 // Pause music playing
 void PauseMusicStream(Music music)
 {
-    PauseAudioStream(music->stream);
+    if (music != NULL) PauseAudioStream(music->stream);
 }
 
 // Resume music playing
 void ResumeMusicStream(Music music)
 {
-    ResumeAudioStream(music->stream);
+    if (music != NULL) ResumeAudioStream(music->stream);
 }
 
 // Stop music playing (close stream)
 // TODO: To clear a buffer, make sure they have been already processed!
 void StopMusicStream(Music music)
 {
+    if (music == NULL) return;
+    
     StopAudioStream(music->stream);
 
     // Restart music context
@@ -1304,6 +1311,8 @@ void StopMusicStream(Music music)
 // TODO: Make sure buffers are ready for update... check music state
 void UpdateMusicStream(Music music)
 {
+    if (music == NULL) return;
+    
     bool streamEnding = false;
 
     unsigned int subBufferSizeInFrames = ((AudioBuffer *)music->stream.audioBuffer)->bufferSizeInFrames/2;
@@ -1364,7 +1373,8 @@ void UpdateMusicStream(Music music)
         UpdateAudioStream(music->stream, pcm, samplesCount);
         if ((music->ctxType == MUSIC_MODULE_XM) || (music->ctxType == MUSIC_MODULE_MOD))
         {
-            music->samplesLeft -= samplesCount/2;
+			if (samplesCount > 1) music->samplesLeft -= samplesCount/2;
+			else music->samplesLeft -= samplesCount;
         }
         else music->samplesLeft -= samplesCount;
 
@@ -1405,32 +1415,35 @@ void UpdateMusicStream(Music music)
 // Check if any music is playing
 bool IsMusicPlaying(Music music)
 {
-    return IsAudioStreamPlaying(music->stream);
+    if (music == NULL) return false;
+    else return IsAudioStreamPlaying(music->stream);
 }
 
 // Set volume for music
 void SetMusicVolume(Music music, float volume)
 {
-    SetAudioStreamVolume(music->stream, volume);
+    if (music != NULL) SetAudioStreamVolume(music->stream, volume);
 }
 
 // Set pitch for music
 void SetMusicPitch(Music music, float pitch)
 {
-    SetAudioStreamPitch(music->stream, pitch);
+    if (music != NULL) SetAudioStreamPitch(music->stream, pitch);
 }
 
 // Set music loop count (loop repeats)
 // NOTE: If set to -1, means infinite loop
 void SetMusicLoopCount(Music music, int count)
 {
-    music->loopCount = count;
+    if (music != NULL) music->loopCount = count;
 }
 
 // Get music time length (in seconds)
 float GetMusicTimeLength(Music music)
 {
-    float totalSeconds = (float)music->totalSamples/(music->stream.sampleRate*music->stream.channels);
+    float totalSeconds = 0.0f;
+    
+    if (music != NULL) totalSeconds = (float)music->totalSamples/(music->stream.sampleRate*music->stream.channels);
 
     return totalSeconds;
 }
@@ -1440,8 +1453,11 @@ float GetMusicTimePlayed(Music music)
 {
     float secondsPlayed = 0.0f;
 
-    unsigned int samplesPlayed = music->totalSamples - music->samplesLeft;
-    secondsPlayed = (float)samplesPlayed/(music->stream.sampleRate*music->stream.channels);
+    if (music != NULL)
+    {
+        unsigned int samplesPlayed = music->totalSamples - music->samplesLeft;
+        secondsPlayed = (float)samplesPlayed/(music->stream.sampleRate*music->stream.channels);
+    }
 
     return secondsPlayed;
 }
@@ -1902,7 +1918,7 @@ static Wave LoadMP3(const char *fileName)
 #endif
 
 // Some required functions for audio standalone module version
-#if defined(AUDIO_STANDALONE)
+#if defined(RAUDIO_STANDALONE)
 // Check file extension
 bool IsFileExtension(const char *fileName, const char *ext)
 {
