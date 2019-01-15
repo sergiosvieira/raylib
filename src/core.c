@@ -982,7 +982,7 @@ const char *GetMonitorName(int monitor)
 }
 
 // Show mouse cursor
-void ShowCursor()
+void ShowCursor(void)
 {
 #if defined(PLATFORM_DESKTOP)
     glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
@@ -991,7 +991,7 @@ void ShowCursor()
 }
 
 // Hides mouse cursor
-void HideCursor()
+void HideCursor(void)
 {
 #if defined(PLATFORM_DESKTOP)
     glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
@@ -1000,13 +1000,13 @@ void HideCursor()
 }
 
 // Check if cursor is not visible
-bool IsCursorHidden()
+bool IsCursorHidden(void)
 {
     return cursorHidden;
 }
 
 // Enables cursor (unlock cursor)
-void EnableCursor()
+void EnableCursor(void)
 {
 #if defined(PLATFORM_DESKTOP)
     glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
@@ -1018,7 +1018,7 @@ void EnableCursor()
 }
 
 // Disables cursor (lock cursor)
-void DisableCursor()
+void DisableCursor(void)
 {
 #if defined(PLATFORM_DESKTOP)
     glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
@@ -1443,6 +1443,41 @@ Vector3 ColorToHSV(Color color)
     if (hsv.x < 0.0f) hsv.x += 360.0f;
 
     return hsv;
+}
+
+// Returns a Color from HSV values
+// Implementation reference: https://en.wikipedia.org/wiki/HSL_and_HSV#Alternative_HSV_conversion
+// NOTE: Color->HSV->Color conversion will not yield exactly the same color due to rounding errors
+Color ColorFromHSV(Vector3 hsv) 
+{
+    Color color = { 0, 0, 0, 255 };
+    float h = hsv.x, s = hsv.y, v = hsv.z;
+    
+    // Red channel
+    float k = fmod((5.0f + h/60.0f), 6);
+    float t = 4.0f - k;
+    k = (t < k) ? t : k;
+    k = (k < 1) ? k : 1;
+    k = (k > 0) ? k : 0;
+    color.r = (v - v*s*k)*255;
+
+    // Green channel
+    k = fmod((3.0f + h/60.0f), 6);
+    t = 4.0f - k;
+    k = (t < k) ? t : k;
+    k = (k < 1) ? k : 1;
+    k = (k > 0) ? k : 0;
+    color.g = (v - v*s*k)*255;
+    
+    // Blue channel
+    k = fmod((1.0f + h/60.0f), 6);
+    t = 4.0f - k;
+    k = (t < k) ? t : k;
+    k = (k < 1) ? k : 1;
+    k = (k > 0) ? k : 0;
+    color.b = (v - v*s*k)*255;
+	
+    return color;
 }
 
 // Returns a Color struct from hexadecimal value

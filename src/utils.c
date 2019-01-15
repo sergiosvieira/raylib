@@ -32,19 +32,21 @@
 
 #include "config.h"
 
-#include "raylib.h"                 // WARNING: Required for: LogType enum
+#include "raylib.h"                     // WARNING: Required for: LogType enum
 #include "utils.h"
 
 #if defined(PLATFORM_ANDROID)
-    #include <errno.h>
-    #include <android/log.h>
-    #include <android/asset_manager.h>
+    #include <errno.h>                  // Required for: Android error types
+    #include <android/log.h>            // Required for: Android log system: __android_log_vprint()
+    #include <android/asset_manager.h>  // Required for: Android assets manager: AAsset, AAssetManager_open(), ...
 #endif
 
-#include <stdlib.h>                 // Required for: malloc(), free()
-#include <stdio.h>                  // Required for: fopen(), fclose(), fputc(), fwrite(), printf(), fprintf(), funopen()
-#include <stdarg.h>                 // Required for: va_list, va_start(), vfprintf(), va_end()
-#include <string.h>                 // Required for: strlen(), strrchr(), strcmp()
+#include <stdlib.h>                     // Required for: malloc(), free()
+#include <stdio.h>                      // Required for: fopen(), fclose(), fputc(), fwrite(), printf(), fprintf(), funopen()
+#include <stdarg.h>                     // Required for: va_list, va_start(), vfprintf(), va_end()
+#include <string.h>                     // Required for: strlen(), strrchr(), strcmp()
+
+#define MAX_TRACELOG_BUFFER_SIZE   128  // Max length of one trace-log message
 
 //----------------------------------------------------------------------------------
 // Global Variables Definition
@@ -93,7 +95,7 @@ void SetTraceLogCallback(TraceLogCallback callback)
 void TraceLog(int msgType, const char *text, ...)
 {
 #if defined(SUPPORT_TRACELOG)
-    static char buffer[128];
+    char buffer[MAX_TRACELOG_BUFFER_SIZE] = { 0 };
     va_list args;
     va_start(args, text);
 
@@ -110,6 +112,7 @@ void TraceLog(int msgType, const char *text, ...)
         case LOG_ERROR: strcpy(buffer, "ERROR: "); break;
         case LOG_WARNING: strcpy(buffer, "WARNING: "); break;
         case LOG_DEBUG: strcpy(buffer, "DEBUG: "); break;
+        case LOG_OTHER: strcpy(buffer, "OTHER: "); break;
         default: break;
     }
 
@@ -123,6 +126,7 @@ void TraceLog(int msgType, const char *text, ...)
         case LOG_WARNING: if (logTypeFlags & LOG_WARNING) __android_log_vprint(ANDROID_LOG_WARN, "raylib", buffer, args); break;
         case LOG_ERROR: if (logTypeFlags & LOG_ERROR) __android_log_vprint(ANDROID_LOG_ERROR, "raylib", buffer, args); break;
         case LOG_DEBUG: if (logTypeFlags & LOG_DEBUG) __android_log_vprint(ANDROID_LOG_DEBUG, "raylib", buffer, args); break;
+        case LOG_OTHER: if (logTypeFlags & LOG_OTHER) __android_log_vprint(ANDROID_LOG_VERBOSE, "raylib", buffer, args); break;
         default: break;
     }
 #else
@@ -132,6 +136,7 @@ void TraceLog(int msgType, const char *text, ...)
         case LOG_WARNING: if (logTypeFlags & LOG_WARNING) vprintf(buffer, args); break;
         case LOG_ERROR: if (logTypeFlags & LOG_ERROR) vprintf(buffer, args); break;
         case LOG_DEBUG: if (logTypeFlags & LOG_DEBUG) vprintf(buffer, args); break;
+        case LOG_OTHER: if (logTypeFlags & LOG_OTHER) vprintf(buffer, args); break;
         default: break;
     }
 #endif
@@ -142,16 +147,6 @@ void TraceLog(int msgType, const char *text, ...)
 
 #endif  // SUPPORT_TRACELOG
 }
-
-// Keep track of memory allocated
-// NOTE: mallocType defines the type of data allocated
-/*
-void RecordMalloc(int mallocType, int mallocSize, const char *msg)
-{
-    // TODO: Investigate how to record memory allocation data...
-    // Maybe creating my own malloc function...
-}
-*/
 
 #if defined(PLATFORM_ANDROID)
 // Initialize asset manager from android app
