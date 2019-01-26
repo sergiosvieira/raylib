@@ -253,11 +253,14 @@ typedef unsigned char byte;
 
     // TraceLog message types
     typedef enum {
-        LOG_INFO = 0,
-        LOG_ERROR,
-        LOG_WARNING,
+        LOG_ALL,
+        LOG_TRACE,
         LOG_DEBUG,
-        LOG_OTHER
+        LOG_INFO,
+        LOG_WARNING,
+        LOG_ERROR,
+        LOG_FATAL,
+        LOG_NONE
     } TraceLogType;
 
     // Texture formats (support depends on OpenGL version)
@@ -2630,8 +2633,11 @@ unsigned char *rlReadScreenPixels(int width, int height)
     {
         for (int x = 0; x < (width*4); x++)
         {
-            // Flip line
-            imgData[((height - 1) - y)*width*4 + x] = screenData[(y*width*4) + x];
+            imgData[((height - 1) - y)*width*4 + x] = screenData[(y*width*4) + x];  // Flip line
+            
+            // Set alpha component value to 255 (no trasparent image retrieval)
+            // NOTE: Alpha value has already been applied to RGB in framebuffer, we don't need it!
+            if (((x + 1)%4) == 0) imgData[((height - 1) - y)*width*4 + x] = 255;
         }
     }
 
