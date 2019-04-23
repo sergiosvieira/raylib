@@ -68,7 +68,7 @@
 *
 *   LICENSE: zlib/libpng
 *
-*   Copyright (c) 2014-2018 Ramon Santamaria (@raysan5)
+*   Copyright (c) 2013-2019 Ramon Santamaria (@raysan5)
 *
 *   This software is provided "as-is", without any express or implied warranty. In no event
 *   will the authors be held liable for any damages arising from the use of this software.
@@ -92,6 +92,8 @@
 // Check if config flags have been externally provided on compilation line
 #if !defined(EXTERNAL_CONFIG_FLAGS)
     #include "config.h"         // Defines module configuration flags
+#else
+    #define RAYLIB_VERSION  "2.5"
 #endif
 
 #if (defined(__linux__) || defined(PLATFORM_WEB)) && _POSIX_C_SOURCE < 199309L
@@ -178,15 +180,14 @@
 
         //#define GLFW_EXPOSE_NATIVE_COCOA      // WARNING: Fails due to type redefinition
         #include <GLFW/glfw3native.h>   // Required for: glfwGetCocoaWindow()
-
     #endif
 #endif
 
 #if defined(__linux__)
-        #include <linux/limits.h> // for NAME_MAX and PATH_MAX defines
-        #define MAX_FILEPATH_LENGTH PATH_MAX // Use Linux define (4096)
+    #include <linux/limits.h>               // for NAME_MAX and PATH_MAX defines
+    #define MAX_FILEPATH_LENGTH PATH_MAX    // Use Linux define (4096)
 #else
-        #define MAX_FILEPATH_LENGTH 256 // Use common value
+    #define MAX_FILEPATH_LENGTH     512     // Use common value
 #endif
 
 #if defined(PLATFORM_ANDROID)
@@ -273,11 +274,13 @@ static GLFWwindow *window;                      // Native window (graphic device
 #endif
 static bool windowReady = false;                // Check if window has been initialized successfully
 static bool windowMinimized = false;            // Check if window has been minimized
+static bool windowResized = false;              // Check if window has been resized
 static const char *windowTitle = NULL;          // Window text title...
 
 static unsigned int displayWidth, displayHeight;// Display width and height (monitor, device-screen, LCD, ...)
 static int screenWidth, screenHeight;           // Screen width and height (used render area)
 static int renderWidth, renderHeight;           // Framebuffer width and height (render area, including black bars if required)
+static int currentWidth, currentHeight;         // Current render width and height, it could change on BeginTextureMode()
 static int renderOffsetX = 0;                   // Offset X from render area (must be divided by 2)
 static int renderOffsetY = 0;                   // Offset Y from render area (must be divided by 2)
 static bool fullscreen = false;                 // Fullscreen mode (useful only for PLATFORM_DESKTOP)
@@ -357,6 +360,15 @@ typedef struct {
 } InputEventWorker;
 
 static InputEventWorker eventWorkers[10];       // List of worker threads for every monitored "/dev/input/event<N>"
+
+typedef struct{
+    int Contents[8];
+    char Head;
+    char Tail;
+} KeyEventFifo;
+
+static KeyEventFifo lastKeyPressedEvdev;        // Buffer for holding keydown events as they arrive (Needed due to multitreading of event workers)
+static char currentKeyStateEvdev[512] = { 0 };  // Registers current frame key state from event based driver (Needs to be seperate because the legacy console based method clears keys on every frame)
 
 #endif
 #if defined(PLATFORM_WEB)
@@ -467,7 +479,7 @@ static EM_BOOL EmscriptenGamepadCallback(int eventType, const EmscriptenGamepadE
 static void InitKeyboard(void);                         // Init raw keyboard system (standard input reading)
 static void ProcessKeyboard(void);                      // Process keyboard events
 static void RestoreKeyboard(void);                      // Restore keyboard system
-static void InitMouse(void);                            // Mouse initialization (including mouse thread)
+static void InitEvdevInput(void);                            // Mouse initialization (including mouse thread)
 static void EventThreadSpawn(char *device);             // Identifies a input device and spawns a thread to handle it if needed
 static void *EventThread(void *arg);                    // Input device events reading thread
 static void InitGamepad(void);                          // Init raw gamepad input
@@ -518,6 +530,8 @@ void InitWindow(int width, int height, const char *title)
 #if defined(PLATFORM_ANDROID)
     screenWidth = width;
     screenHeight = height;
+    currentWidth = width;
+    currentHeight = height;
 
     // Input data is android app pointer
     internalDataPath = androidApp->activity->internalDataPath;
@@ -585,7 +599,7 @@ void InitWindow(int width, int height, const char *title)
 
 #if defined(PLATFORM_RPI)
     // Init raw input system
-    InitMouse();        // Mouse init
+    InitEvdevInput();        // Mouse init
     InitKeyboard();     // Keyboard init
     InitGamepad();      // Gamepad init
 #endif
@@ -704,7 +718,7 @@ bool WindowShouldClose(void)
 {
 #if defined(PLATFORM_WEB)
     // Emterpreter-Async required to run sync code
-    // https://github.com/kripken/emscripten/wiki/Emterpreter#emterpreter-async-run-synchronous-code
+    // https://github.com/emscripten-core/emscripten/wiki/Emterpreter#emterpreter-async-run-synchronous-code
     // By default, this function is never called on a web-ready raylib example because we encapsulate
     // frame code in a UpdateDrawFrame() function, to allow browser manage execution asynchronously
     // but now emscripten allows sync code to be executed in an interpreted way, using emterpreter!
@@ -739,6 +753,16 @@ bool IsWindowMinimized(void)
 #endif
 }
 
+// Check if window has been resized
+bool IsWindowResized(void)
+{
+#if defined(PLATFORM_DESKTOP) || defined(PLATFORM_WEB) || defined(PLATFORM_UWP)
+    return windowResized;
+#else
+    return false;
+#endif
+}
+
 // Check if window is currently hidden
 bool IsWindowHidden(void)
 {
@@ -765,24 +789,23 @@ void ToggleFullscreen(void)
 }
 
 // Set icon for window (only PLATFORM_DESKTOP)
+// NOTE: Image must be in RGBA format, 8bit per channel
 void SetWindowIcon(Image image)
 {
 #if defined(PLATFORM_DESKTOP)
-    Image imicon = ImageCopy(image);
-    ImageFormat(&imicon, UNCOMPRESSED_R8G8B8A8);
+    if (image.format == UNCOMPRESSED_R8G8B8A8)
+    {
+        GLFWimage icon[1] = { 0 };
 
-    GLFWimage icon[1] = { 0 };
+        icon[0].width = image.width;
+        icon[0].height = image.height;
+        icon[0].pixels = (unsigned char *)image.data;
 
-    icon[0].width = imicon.width;
-    icon[0].height = imicon.height;
-    icon[0].pixels = (unsigned char *)imicon.data;
-
-    // NOTE 1: We only support one image icon
-    // NOTE 2: The specified image data is copied before this function returns
-    glfwSetWindowIcon(window, 1, icon);
-
-    // TODO: Support multi-image icons --> image.mipmaps
-    UnloadImage(imicon);
+        // NOTE 1: We only support one image icon
+        // NOTE 2: The specified image data is copied before this function returns
+        glfwSetWindowIcon(window, 1, icon);
+    }
+    else TraceLog(LOG_WARNING, "Window icon image must be in R8G8B8A8 pixel format");
 #endif
 }
 
@@ -868,7 +891,7 @@ void *GetWindowHandle(void)
 {
 #if defined(_WIN32)
     // NOTE: Returned handle is: void *HWND (windows.h)
-	return glfwGetWin32Window(window);
+    return glfwGetWin32Window(window);
 #elif defined(__linux__)
     // NOTE: Returned handle is: unsigned long Window (X.h)
     // typedef unsigned long XID;
@@ -981,6 +1004,25 @@ const char *GetMonitorName(int monitor)
     return "";
 }
 
+// Get clipboard text content
+// NOTE: returned string is allocated and freed by GLFW
+const char *GetClipboardText(void)
+{
+#if defined(PLATFORM_DESKTOP)
+    return glfwGetClipboardString(window);
+#else
+    return NULL;
+#endif
+}
+
+// Set clipboard text content
+void SetClipboardText(const char *text)
+{
+#if defined(PLATFORM_DESKTOP)
+    glfwSetClipboardString(window, text);
+#endif
+}
+
 // Show mouse cursor
 void ShowCursor(void)
 {
@@ -1071,7 +1113,7 @@ void EndDrawing(void)
             unsigned char *screenData = rlReadScreenPixels(screenWidth, screenHeight);
             GifWriteFrame(screenData, screenWidth, screenHeight, 10, 8, false);
 
-            free(screenData);   // Free image data
+            RL_FREE(screenData);   // Free image data
         }
 
         if (((gifFramesCounter/15)%2) == 1)
@@ -1122,7 +1164,7 @@ void BeginMode2D(Camera2D camera)
 
     Matrix matTransform = MatrixMultiply(MatrixMultiply(matOrigin, MatrixMultiply(matScale, matRotation)), matTranslation);
 
-    rlMultMatrixf(MatrixToFloat(matTransform));
+    rlMultMatrixf(MatrixToFloat(matTransform));  // Apply transformation to modelview
 }
 
 // Ends 2D mode with custom camera
@@ -1142,7 +1184,7 @@ void BeginMode3D(Camera3D camera)
     rlPushMatrix();                     // Save previous matrix, which contains the settings for the 2d ortho projection
     rlLoadIdentity();                   // Reset current matrix (PROJECTION)
 
-    float aspect = (float)screenWidth/(float)screenHeight;
+    float aspect = (float)currentWidth/(float)currentHeight;
 
     if (camera.type == CAMERA_PERSPECTIVE)
     {
@@ -1208,6 +1250,11 @@ void BeginTextureMode(RenderTexture2D target)
     rlLoadIdentity();                   // Reset current matrix (MODELVIEW)
 
     //rlScalef(0.0f, -1.0f, 0.0f);      // Flip Y-drawing (?)
+
+    // Setup current width/height for proper aspect ratio
+    // calculation when using BeginMode3D()
+    currentWidth = target.texture.width;
+    currentHeight = target.texture.height;
 }
 
 // Ends drawing to render texture
@@ -1229,6 +1276,10 @@ void EndTextureMode(void)
 
     rlMatrixMode(RL_MODELVIEW);         // Switch back to MODELVIEW matrix
     rlLoadIdentity();                   // Reset current matrix (MODELVIEW)
+
+    // Reset current screen size
+    currentWidth = GetScreenWidth();
+    currentHeight = GetScreenHeight();
 }
 
 // Returns a ray trace from mouse position
@@ -1401,11 +1452,11 @@ Vector3 ColorToHSV(Color color)
     Vector3 hsv = { 0.0f, 0.0f, 0.0f };
     float min, max, delta;
 
-    min = rgb.x < rgb.y ? rgb.x : rgb.y;
-    min = min  < rgb.z ? min  : rgb.z;
+    min = rgb.x < rgb.y? rgb.x : rgb.y;
+    min = min  < rgb.z? min  : rgb.z;
 
-    max = rgb.x > rgb.y ? rgb.x : rgb.y;
-    max = max  > rgb.z ? max  : rgb.z;
+    max = rgb.x > rgb.y? rgb.x : rgb.y;
+    max = max  > rgb.z? max  : rgb.z;
 
     hsv.z = max;            // Value
     delta = max - min;
@@ -1456,25 +1507,25 @@ Color ColorFromHSV(Vector3 hsv)
     // Red channel
     float k = fmod((5.0f + h/60.0f), 6);
     float t = 4.0f - k;
-    k = (t < k) ? t : k;
-    k = (k < 1) ? k : 1;
-    k = (k > 0) ? k : 0;
+    k = (t < k)? t : k;
+    k = (k < 1)? k : 1;
+    k = (k > 0)? k : 0;
     color.r = (v - v*s*k)*255;
 
     // Green channel
     k = fmod((3.0f + h/60.0f), 6);
     t = 4.0f - k;
-    k = (t < k) ? t : k;
-    k = (k < 1) ? k : 1;
-    k = (k > 0) ? k : 0;
+    k = (t < k)? t : k;
+    k = (k < 1)? k : 1;
+    k = (k > 0)? k : 0;
     color.g = (v - v*s*k)*255;
 
     // Blue channel
     k = fmod((1.0f + h/60.0f), 6);
     t = 4.0f - k;
-    k = (t < k) ? t : k;
-    k = (k < 1) ? k : 1;
-    k = (k > 0) ? k : 0;
+    k = (t < k)? t : k;
+    k = (k < 1)? k : 1;
+    k = (k > 0)? k : 0;
     color.b = (v - v*s*k)*255;
 
     return color;
@@ -1544,7 +1595,7 @@ void TakeScreenshot(const char *fileName)
 #endif
 
     ExportImage(image, path);
-    free(imgData);
+    RL_FREE(imgData);
 
 #if defined(PLATFORM_WEB)
     // Download file from MEMFS (emscripten memory filesystem)
@@ -1632,37 +1683,26 @@ const char *GetFileName(const char *filePath)
 // Get filename string without extension (memory should be freed)
 const char *GetFileNameWithoutExt(const char *filePath)
 {
-    char *result, *lastDot, *lastSep;
+    #define MAX_FILENAMEWITHOUTEXT_LENGTH   64
 
-    char nameDot = '.';     // Default filename to extension separator character
-    char pathSep = '/';     // Default filepath separator character
+    static char fileName[MAX_FILENAMEWITHOUTEXT_LENGTH];
+    memset(fileName, 0, MAX_FILENAMEWITHOUTEXT_LENGTH);
 
-    // Error checks and allocate string
-    if (filePath == NULL) return NULL;
+    strcpy(fileName, GetFileName(filePath));   // Get filename with extension
 
-    // Try to allocate new string, same size as original
-    // NOTE: By default strlen() does not count the '\0' character
-    if ((result = (char *)malloc(strlen(filePath) + 1)) == NULL) return NULL;
+    int len = strlen(fileName);
 
-    strcpy(result, filePath);   // Make a copy of the string
-
-    // NOTE: strrchr() returns a pointer to the last occurrence of character
-    lastDot = strrchr(result, nameDot);
-    lastSep = (pathSep == 0) ? NULL : strrchr(result, pathSep);
-
-    if (lastDot != NULL)            // Check if it has an extension separator...
+    for (int i = 0; (i < len) && (i < MAX_FILENAMEWITHOUTEXT_LENGTH); i++)
     {
-        if (lastSep != NULL)        // ...and it's before the extenstion separator...
+        if (fileName[i] == '.')
         {
-            if (lastSep < lastDot)
-            {
-                *lastDot = '\0';    // ...then remove it
-            }
+            // NOTE: We break on first '.' found
+            fileName[i] = '\0';
+            break;
         }
-        else *lastDot = '\0';       // Has extension separator with no path separator
     }
 
-    return result;                  // Return the modified string
+    return fileName;
 }
 
 // Get directory for a given fileName (with path)
@@ -1702,8 +1742,8 @@ char **GetDirectoryFiles(const char *dirPath, int *fileCount)
     ClearDirectoryFiles();
 
     // Memory allocation for MAX_DIRECTORY_FILES
-    dirFilesPath = (char **)malloc(sizeof(char *)*MAX_DIRECTORY_FILES);
-    for (int i = 0; i < MAX_DIRECTORY_FILES; i++) dirFilesPath[i] = (char *)malloc(sizeof(char)*MAX_FILEPATH_LENGTH);
+    dirFilesPath = (char **)RL_MALLOC(sizeof(char *)*MAX_DIRECTORY_FILES);
+    for (int i = 0; i < MAX_DIRECTORY_FILES; i++) dirFilesPath[i] = (char *)RL_MALLOC(sizeof(char)*MAX_FILEPATH_LENGTH);
 
     int counter = 0;
     struct dirent *ent;
@@ -1736,9 +1776,9 @@ void ClearDirectoryFiles(void)
 {
     if (dirFilesCount > 0)
     {
-        for (int i = 0; i < dirFilesCount; i++) free(dirFilesPath[i]);
+        for (int i = 0; i < dirFilesCount; i++) RL_FREE(dirFilesPath[i]);
 
-        free(dirFilesPath);
+        RL_FREE(dirFilesPath);
         dirFilesCount = 0;
     }
 }
@@ -1768,9 +1808,9 @@ void ClearDroppedFiles(void)
 {
     if (dropFilesCount > 0)
     {
-        for (int i = 0; i < dropFilesCount; i++) free(dropFilesPath[i]);
+        for (int i = 0; i < dropFilesCount; i++) RL_FREE(dropFilesPath[i]);
 
-        free(dropFilesPath);
+        RL_FREE(dropFilesPath);
 
         dropFilesCount = 0;
     }
@@ -1885,18 +1925,17 @@ void OpenURL(const char *url)
     }
     else
     {
-        char *cmd = (char *)calloc(strlen(url) + 10, sizeof(char));
+        char *cmd = (char *)RL_CALLOC(strlen(url) + 10, sizeof(char));
 
 #if defined(_WIN32)
-        sprintf(cmd, "explorer '%s'", url);
+        sprintf(cmd, "explorer %s", url);
 #elif defined(__linux__)
         sprintf(cmd, "xdg-open '%s'", url); // Alternatives: firefox, x-www-browser
 #elif defined(__APPLE__)
         sprintf(cmd, "open '%s'", url);
 #endif
         system(cmd);
-
-        free(cmd);
+        RL_FREE(cmd);
     }
 }
 
@@ -2185,7 +2224,7 @@ void SetMouseOffset(int offsetX, int offsetY)
 // NOTE: Useful when rendering to different size targets
 void SetMouseScale(float scaleX, float scaleY)
 {
-	mouseScale = (Vector2){ scaleX, scaleY };
+    mouseScale = (Vector2){ scaleX, scaleY };
 }
 
 // Returns mouse wheel movement Y
@@ -2262,6 +2301,8 @@ static bool InitGraphicsDevice(int width, int height)
 {
     screenWidth = width;        // User desired width
     screenHeight = height;      // User desired height
+    currentWidth = width;
+    currentHeight = height;
 
     // NOTE: Framebuffer (render area - renderWidth, renderHeight) could include black bars...
     // ...in top-down or left-right to match display aspect ratio (no weird scalings)
@@ -2306,7 +2347,7 @@ static bool InitGraphicsDevice(int width, int height)
     displayHeight = screenHeight;
 #endif  // defined(PLATFORM_WEB)
 
-    glfwDefaultWindowHints();                   // Set default windows hints:
+    glfwDefaultWindowHints();                       // Set default windows hints:
     //glfwWindowHint(GLFW_RED_BITS, 8);             // Framebuffer red color component bits
     //glfwWindowHint(GLFW_GREEN_BITS, 8);           // Framebuffer green color component bits
     //glfwWindowHint(GLFW_BLUE_BITS, 8);            // Framebuffer blue color component bits
@@ -2315,6 +2356,10 @@ static bool InitGraphicsDevice(int width, int height)
     //glfwWindowHint(GLFW_REFRESH_RATE, 0);         // Refresh rate for fullscreen window
     //glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_API); // OpenGL API to use. Alternative: GLFW_OPENGL_ES_API
     //glfwWindowHint(GLFW_AUX_BUFFERS, 0);          // Number of auxiliar buffers
+#if defined(PLATFORM_DESKTOP)
+    // TODO: If using external GLFW, it requires latest GLFW 3.3 for this functionality
+    //glfwWindowHint(GLFW_SCALE_TO_MONITOR, GLFW_TRUE);   // Scale content area based on the monitor content scale where window is placed on
+#endif
 
     // Check some Window creation flags
     if (configFlags & FLAG_WINDOW_HIDDEN) glfwWindowHint(GLFW_VISIBLE, GL_FALSE);           // Visible window
@@ -3022,8 +3067,16 @@ static void PollInputEvents(void)
 #endif
 
 #if defined(PLATFORM_RPI)
+
     // Register previous keys states
-    for (int i = 0; i < 512; i++) previousKeyState[i] = currentKeyState[i];
+    for (int i = 0; i < 512; i++)previousKeyState[i] = currentKeyState[i];
+
+    // Grab a keypress from the evdev fifo if avalable
+    if(lastKeyPressedEvdev.Head != lastKeyPressedEvdev.Tail)
+    {
+        lastKeyPressed = lastKeyPressedEvdev.Contents[lastKeyPressedEvdev.Tail];    // Read the key from the buffer
+        lastKeyPressedEvdev.Tail = (lastKeyPressedEvdev.Tail + 1) & 0x07;           // Increment the tail pointer forwards and binary wraparound after 7 (fifo is 8 elements long)
+    }
 
     // Register previous mouse states
     previousMouseWheelY = currentMouseWheelY;
@@ -3106,6 +3159,8 @@ static void PollInputEvents(void)
         }
     }
 
+    windowResized = false;
+
 #if defined(SUPPORT_EVENTS_WAITING)
     glfwWaitEvents();
 #else
@@ -3117,7 +3172,8 @@ static void PollInputEvents(void)
 // NOTE: GLFW3 joystick functionality not available in web
 #if defined(PLATFORM_WEB)
     // Get number of gamepads connected
-    int numGamepads = emscripten_get_num_gamepads();
+    int numGamepads = 0;
+    if (emscripten_sample_gamepad_data() == EMSCRIPTEN_RESULT_SUCCESS) numGamepads = emscripten_get_num_gamepads();
 
     for (int i = 0; (i < numGamepads) && (i < MAX_GAMEPADS); i++)
     {
@@ -3140,7 +3196,7 @@ static void PollInputEvents(void)
                 }
                 else currentGamepadState[i][j] = 0;
 
-                //printf("Gamepad %d, button %d: Digital: %d, Analog: %g\n", gamepadState.index, j, gamepadState.digitalButton[j], gamepadState.analogButton[j]);
+                //TraceLog(LOG_DEBUG, "Gamepad %d, button %d: Digital: %d, Analog: %g", gamepadState.index, j, gamepadState.digitalButton[j], gamepadState.analogButton[j]);
             }
 
             // Register axis data for every connected gamepad
@@ -3161,7 +3217,7 @@ static void PollInputEvents(void)
 
     // Poll Events (registered events)
     // NOTE: Activity is paused if not enabled (appEnabled)
-    while ((ident = ALooper_pollAll(appEnabled ? 0 : -1, NULL, &events,(void**)&source)) >= 0)
+    while ((ident = ALooper_pollAll(appEnabled? 0 : -1, NULL, &events,(void**)&source)) >= 0)
     {
         // Process this event
         if (source != NULL) source->process(androidApp, source);
@@ -3177,10 +3233,10 @@ static void PollInputEvents(void)
 #endif
 
 #if defined(PLATFORM_RPI)
-    // NOTE: Mouse input events polling is done asynchonously in another pthread - MouseThread()
+    // NOTE: Mouse input events polling is done asynchonously in another pthread - EventThread()
 
     // NOTE: Keyboard reading could be done using input_event(s) reading or just read from stdin,
-    // we use method 2 (stdin) but maybe in a future we should change to method 1...
+    // we now use both methods inside here. 2nd method is still used for legacy purposes (Allows for input trough SSH console)
     ProcessKeyboard();
 
     // NOTE: Gamepad (Joystick) input events polling is done asynchonously in another pthread - GamepadThread()
@@ -3247,9 +3303,9 @@ static void KeyCallback(GLFWwindow *window, int key, int scancode, int action, i
                 char path[512] = { 0 };
             #if defined(PLATFORM_ANDROID)
                 strcpy(path, internalDataPath);
-                strcat(path, TextFormat("/screenrec%03i.gif", screenshotCounter));
+                strcat(path, TextFormat("./screenrec%03i.gif", screenshotCounter));
             #else
-                strcpy(path, TextFormat("/screenrec%03i.gif", screenshotCounter));
+                strcpy(path, TextFormat("./screenrec%03i.gif", screenshotCounter));
             #endif
 
                 // NOTE: delay represents the time between frames in the gif, if we capture a gif frame every
@@ -3378,8 +3434,12 @@ static void WindowSizeCallback(GLFWwindow *window, int width, int height)
     screenHeight = height;
     renderWidth = width;
     renderHeight = height;
+    currentWidth = width;
+    currentHeight = height;
 
     // NOTE: Postprocessing texture is not scaled to new size
+
+    windowResized = true;
 }
 
 // GLFW3 WindowIconify Callback, runs when window is minimized/restored
@@ -3396,11 +3456,11 @@ static void WindowDropCallback(GLFWwindow *window, int count, const char **paths
 {
     ClearDroppedFiles();
 
-    dropFilesPath = (char **)malloc(sizeof(char *)*count);
+    dropFilesPath = (char **)RL_MALLOC(sizeof(char *)*count);
 
     for (int i = 0; i < count; i++)
     {
-        dropFilesPath[i] = (char *)malloc(sizeof(char)*MAX_FILEPATH_LENGTH);     // Max path length using MAX_FILEPATH_LENGTH set to 256 char
+        dropFilesPath[i] = (char *)RL_MALLOC(sizeof(char)*MAX_FILEPATH_LENGTH);
         strcpy(dropFilesPath[i], paths[i]);
     }
 
@@ -3646,7 +3706,6 @@ static int32_t AndroidInputCallback(struct android_app *app, AInputEvent *event)
         ProcessGestureEvent(gestureEvent);
     }
 #else
-
     // Support only simple touch position
     if (flags == AMOTION_EVENT_ACTION_DOWN)
     {
@@ -3738,18 +3797,19 @@ static EM_BOOL EmscriptenTouchCallback(int eventType, const EmscriptenTouchEvent
         y = touchEvent->touches[i].canvasY;
     }
 
-    printf("%s, numTouches: %d %s%s%s%s\n", emscripten_event_type_to_string(eventType), event->numTouches,
-           event->ctrlKey ? " CTRL" : "", event->shiftKey ? " SHIFT" : "", event->altKey ? " ALT" : "", event->metaKey ? " META" : "");
+    TraceLog(LOG_DEBUG, "%s, numTouches: %d %s%s%s%s", emscripten_event_type_to_string(eventType), event->numTouches,
+           event->ctrlKey? " CTRL" : "", event->shiftKey? " SHIFT" : "", event->altKey? " ALT" : "", event->metaKey? " META" : "");
 
     for (int i = 0; i < event->numTouches; ++i)
     {
         const EmscriptenTouchPoint *t = &event->touches[i];
 
-        printf("  %ld: screen: (%ld,%ld), client: (%ld,%ld), page: (%ld,%ld), isChanged: %d, onTarget: %d, canvas: (%ld, %ld)\n",
+        TraceLog(LOG_DEBUG, "  %ld: screen: (%ld,%ld), client: (%ld,%ld), page: (%ld,%ld), isChanged: %d, onTarget: %d, canvas: (%ld, %ld)",
           t->identifier, t->screenX, t->screenY, t->clientX, t->clientY, t->pageX, t->pageY, t->isChanged, t->onTarget, t->canvasX, t->canvasY);
     }
     */
 
+#if defined(SUPPORT_GESTURES_SYSTEM)
     GestureEvent gestureEvent;
 
     // Register touch actions
@@ -3784,6 +3844,17 @@ static EM_BOOL EmscriptenTouchCallback(int eventType, const EmscriptenTouchEvent
 
     // Gesture data is sent to gestures system for processing
     ProcessGestureEvent(gestureEvent);
+#else
+    // Support only simple touch position
+    if (eventType == EMSCRIPTEN_EVENT_TOUCHSTART)
+    {
+        // Get first touch position
+        touchPosition[0] = (Vector2){ touchEvent->touches[0].targetX, touchEvent->touches[0].targetY };
+
+        touchPosition[0].x /= (float)GetScreenWidth();
+        touchPosition[0].y /= (float)GetScreenHeight();
+    }
+#endif
 
     return 1;
 }
@@ -3792,12 +3863,12 @@ static EM_BOOL EmscriptenTouchCallback(int eventType, const EmscriptenTouchEvent
 static EM_BOOL EmscriptenGamepadCallback(int eventType, const EmscriptenGamepadEvent *gamepadEvent, void *userData)
 {
     /*
-    printf("%s: timeStamp: %g, connected: %d, index: %ld, numAxes: %d, numButtons: %d, id: \"%s\", mapping: \"%s\"\n",
-           eventType != 0 ? emscripten_event_type_to_string(eventType) : "Gamepad state",
+    TraceLog(LOG_DEBUG, "%s: timeStamp: %g, connected: %d, index: %ld, numAxes: %d, numButtons: %d, id: \"%s\", mapping: \"%s\"",
+           eventType != 0? emscripten_event_type_to_string(eventType) : "Gamepad state",
            gamepadEvent->timestamp, gamepadEvent->connected, gamepadEvent->index, gamepadEvent->numAxes, gamepadEvent->numButtons, gamepadEvent->id, gamepadEvent->mapping);
 
-    for(int i = 0; i < gamepadEvent->numAxes; ++i) printf("Axis %d: %g\n", i, gamepadEvent->axis[i]);
-    for(int i = 0; i < gamepadEvent->numButtons; ++i) printf("Button %d: Digital: %d, Analog: %g\n", i, gamepadEvent->digitalButton[i], gamepadEvent->analogButton[i]);
+    for(int i = 0; i < gamepadEvent->numAxes; ++i) TraceLog(LOG_DEBUG, "Axis %d: %g", i, gamepadEvent->axis[i]);
+    for(int i = 0; i < gamepadEvent->numButtons; ++i) TraceLog(LOG_DEBUG, "Button %d: Digital: %d, Analog: %g", i, gamepadEvent->digitalButton[i], gamepadEvent->analogButton[i]);
     */
 
     if ((gamepadEvent->connected) && (gamepadEvent->index < MAX_GAMEPADS)) gamepadReady[gamepadEvent->index] = true;
@@ -3872,14 +3943,13 @@ static void ProcessKeyboard(void)
     // Reset pressed keys array (it will be filled below)
     for (int i = 0; i < 512; i++) currentKeyState[i] = 0;
 
+    // Check keys from event input workers (This is the new keyboard reading method)
+    for (int i = 0; i < 512; i++) currentKeyState[i] = currentKeyStateEvdev[i];
+
     // Fill all read bytes (looking for keys)
     for (int i = 0; i < bufferByteCount; i++)
     {
         TraceLog(LOG_DEBUG, "Bytes on keysBuffer: %i", bufferByteCount);
-
-        //printf("Key(s) bytes: ");
-        //for (int i = 0; i < bufferByteCount; i++) printf("0x%02x ", keysBuffer[i]);
-        //printf("\n");
 
         // NOTE: If (key == 0x1b), depending on next key, it could be a special keymap code!
         // Up -> 1b 5b 41 / Left -> 1b 5b 44 / Right -> 1b 5b 43 / Down -> 1b 5b 42
@@ -3972,8 +4042,8 @@ static void RestoreKeyboard(void)
     ioctl(STDIN_FILENO, KDSKBMODE, defaultKeyboardMode);
 }
 
-// Mouse initialization (including mouse thread)
-static void InitMouse(void)
+// Initialise user input from evdev(/dev/input/event<N>) this means mouse, keyboard or gamepad devices
+static void InitEvdevInput(void)
 {
     char path[MAX_FILEPATH_LENGTH];
     DIR *directory;
@@ -3985,6 +4055,11 @@ static void InitMouse(void)
         touchPosition[i].x = -1;
         touchPosition[i].y = -1;
     }
+    // Reset keypress buffer
+    lastKeyPressedEvdev.Head = 0;
+    lastKeyPressedEvdev.Tail = 0;
+    // Reset keyboard key state
+    for (int i = 0; i < 512; i++) currentKeyStateEvdev[i] = 0;
 
     // Open the linux directory of "/dev/input"
     directory = opendir(DEFAULT_EVDEV_PATH);
@@ -4153,15 +4228,15 @@ static void EventThreadSpawn(char *device)
 
     // Decide what to do with the device
     //-------------------------------------------------------------------------------------------------------
-    if (worker->isTouch || worker->isMouse)
+    if (worker->isTouch || worker->isMouse || worker->isKeyboard)
     {
         // Looks like a interesting device
         TraceLog(LOG_INFO, "Opening input device [%s] (%s%s%s%s%s)", device,
-            worker->isMouse ? "mouse " : "",
-            worker->isMultitouch ? "multitouch " : "",
-            worker->isTouch ? "touchscreen " : "",
-            worker->isGamepad ? "gamepad " : "",
-            worker->isKeyboard ? "keyboard " : "");
+            worker->isMouse? "mouse " : "",
+            worker->isMultitouch? "multitouch " : "",
+            worker->isTouch? "touchscreen " : "",
+            worker->isGamepad? "gamepad " : "",
+            worker->isKeyboard? "keyboard " : "");
 
         // Create a thread for this device
         int error = pthread_create(&worker->threadId, NULL, &EventThread, (void *)worker);
@@ -4203,13 +4278,35 @@ static void EventThreadSpawn(char *device)
 // Input device events reading thread
 static void *EventThread(void *arg)
 {
+    // Scancode to keycode mapping for US keyboards
+    // TODO: Proabobly replace this with a keymap from the X11 to get the correct regional map for the keyboard (Currently non US keyboards will have the wrong mapping for some keys)
+    static const int keymap_US[] =
+        {0,256,49,50,51,52,53,54,55,56,57,48,45,61,259,258,81,87,69,82,84,
+        89,85,73,79,80,91,93,257,341,65,83,68,70,71,72,74,75,76,59,39,96,
+        340,92,90,88,67,86,66,78,77,44,46,47,344,332,342,32,280,290,291,
+        292,293,294,295,296,297,298,299,282,281,327,328,329,333,324,325,
+        326,334,321,322,323,320,330,0,85,86,300,301,89,90,91,92,93,94,95,
+        335,345,331,283,346,101,268,265,266,263,262,269,264,267,260,261,
+        112,113,114,115,116,117,118,119,120,121,122,123,124,125,347,127,
+        128,129,130,131,132,133,134,135,136,137,138,139,140,141,142,143,
+        144,145,146,147,148,149,150,151,152,153,154,155,156,157,158,159,
+        160,161,162,163,164,165,166,167,168,169,170,171,172,173,174,175,
+        176,177,178,179,180,181,182,183,184,185,186,187,188,189,190,191,
+        192,193,194,0,0,0,0,0,200,201,202,203,204,205,206,207,208,209,210,
+        211,212,213,214,215,216,217,218,219,220,221,222,223,224,225,226,
+        227,228,229,230,231,232,233,234,235,236,237,238,239,240,241,242,
+        243,244,245,246,247,248,0,0,0,0,0,0,0,};
+
     struct input_event event;
-    GestureEvent gestureEvent;
     InputEventWorker *worker = (InputEventWorker *)arg;
-    bool GestureNeedsUpdate = false;
+
+    int touchAction = -1;
+    bool gestureUpdate = false;
+    int keycode;
 
     while (!windowShouldClose)
     {
+        // Try to read data from the device and only continue if successful
         if (read(worker->fd, &event, sizeof(event)) == (int)sizeof(event))
         {
             // Relative movement parsing
@@ -4219,16 +4316,22 @@ static void *EventThread(void *arg)
                 {
                     mousePosition.x += event.value;
                     touchPosition[0].x = mousePosition.x;
-                    gestureEvent.touchAction = TOUCH_MOVE;
-                    GestureNeedsUpdate = true;
+
+                    #if defined(SUPPORT_GESTURES_SYSTEM)
+                        touchAction = TOUCH_MOVE;
+                        gestureUpdate = true;
+                    #endif
                 }
 
                 if (event.code == REL_Y)
                 {
                     mousePosition.y += event.value;
                     touchPosition[0].y = mousePosition.y;
-                    gestureEvent.touchAction = TOUCH_MOVE;
-                    GestureNeedsUpdate = true;
+
+                    #if defined(SUPPORT_GESTURES_SYSTEM)
+                        touchAction = TOUCH_MOVE;
+                        gestureUpdate = true;
+                    #endif
                 }
 
                 if (event.code == REL_WHEEL)
@@ -4244,15 +4347,21 @@ static void *EventThread(void *arg)
                 if (event.code == ABS_X)
                 {
                     mousePosition.x = (event.value - worker->absRange.x)*screenWidth/worker->absRange.width;   // Scale acording to absRange
-                    gestureEvent.touchAction = TOUCH_MOVE;
-                    GestureNeedsUpdate = true;
+
+                    #if defined(SUPPORT_GESTURES_SYSTEM)
+                        touchAction = TOUCH_MOVE;
+                        gestureUpdate = true;
+                    #endif
                 }
 
                 if (event.code == ABS_Y)
                 {
                     mousePosition.y = (event.value - worker->absRange.y)*screenHeight/worker->absRange.height; // Scale acording to absRange
-                    gestureEvent.touchAction = TOUCH_MOVE;
-                    GestureNeedsUpdate = true;
+
+                    #if defined(SUPPORT_GESTURES_SYSTEM)
+                        touchAction = TOUCH_MOVE;
+                        gestureUpdate = true;
+                    #endif
                 }
 
                 // Multitouch movement
@@ -4287,17 +4396,43 @@ static void *EventThread(void *arg)
             // Button parsing
             if (event.type == EV_KEY)
             {
-                if((event.code == BTN_TOUCH) || (event.code == BTN_LEFT))
+
+                // Mouse button parsing
+                if ((event.code == BTN_TOUCH) || (event.code == BTN_LEFT))
                 {
                     currentMouseStateEvdev[MOUSE_LEFT_BUTTON] = event.value;
-                    if (event.value > 0) gestureEvent.touchAction = TOUCH_DOWN;
-                    else gestureEvent.touchAction = TOUCH_UP;
-                    GestureNeedsUpdate = true;
+
+                    #if defined(SUPPORT_GESTURES_SYSTEM)
+                        if (event.value > 0) touchAction = TOUCH_DOWN;
+                        else touchAction = TOUCH_UP;
+                        gestureUpdate = true;
+                    #endif
                 }
 
                 if (event.code == BTN_RIGHT) currentMouseStateEvdev[MOUSE_RIGHT_BUTTON] =  event.value;
 
                 if (event.code == BTN_MIDDLE) currentMouseStateEvdev[MOUSE_MIDDLE_BUTTON] =  event.value;
+
+                // Keyboard button parsing
+                if((event.code >= 1) && (event.code <= 255))     //Keyboard keys appear for codes 1 to 255
+                {
+                    keycode = keymap_US[event.code & 0xFF];     // The code we get is a scancode so we look up the apropriate keycode
+                    // Make sure we got a valid keycode
+                    if((keycode > 0) && (keycode < sizeof(currentKeyState)))
+                    {
+                        // Store the key information for raylib to later use
+                        currentKeyStateEvdev[keycode] = event.value;
+                        if(event.value > 0)
+                        {
+                            // Add the key int the fifo
+                            lastKeyPressedEvdev.Contents[lastKeyPressedEvdev.Head] = keycode;   // Put the data at the front of the fifo snake
+                            lastKeyPressedEvdev.Head = (lastKeyPressedEvdev.Head + 1) & 0x07;   // Increment the head pointer forwards and binary wraparound after 7 (fifo is 8 elements long)
+                            // TODO: This fifo is not fully threadsafe with multiple writers, so multiple keyboards hitting a key at the exact same time could miss a key (double write to head before it was incremented)
+                        }
+                        TraceLog(LOG_DEBUG, "KEY%s ScanCode: %4i KeyCode: %4i",event.value == 0 ? "UP":"DOWN", event.code, keycode);
+                    }
+                }
+
             }
 
             // Screen confinement
@@ -4308,22 +4443,31 @@ static void *EventThread(void *arg)
             if (mousePosition.y > screenHeight/mouseScale.y) mousePosition.y = screenHeight/mouseScale.y;
 
             // Gesture update
-            if (GestureNeedsUpdate)
+            if (gestureUpdate)
             {
+#if defined(SUPPORT_GESTURES_SYSTEM)
+                GestureEvent gestureEvent = { 0 };
+
                 gestureEvent.pointCount = 0;
+                gestureEvent.touchAction = touchAction;
+
                 if (touchPosition[0].x >= 0) gestureEvent.pointCount++;
                 if (touchPosition[1].x >= 0) gestureEvent.pointCount++;
                 if (touchPosition[2].x >= 0) gestureEvent.pointCount++;
                 if (touchPosition[3].x >= 0) gestureEvent.pointCount++;
+
                 gestureEvent.pointerId[0] = 0;
                 gestureEvent.pointerId[1] = 1;
                 gestureEvent.pointerId[2] = 2;
                 gestureEvent.pointerId[3] = 3;
+
                 gestureEvent.position[0] = touchPosition[0];
                 gestureEvent.position[1] = touchPosition[1];
                 gestureEvent.position[2] = touchPosition[2];
                 gestureEvent.position[3] = touchPosition[3];
+
                 ProcessGestureEvent(gestureEvent);
+#endif
             }
         }
         else

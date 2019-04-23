@@ -45,12 +45,11 @@ endif()
 add_definitions("-DRAYLIB_CMAKE=1")
 
 if(USE_AUDIO)
-  file(GLOB mini_al external/mini_al.c)
   MESSAGE(STATUS "Audio Backend: mini_al")
-  set(sources ${raylib_sources} ${mini_al})
+  set(sources ${raylib_sources})
 else()
   MESSAGE(STATUS "Audio Backend: None (-DUSE_AUDIO=OFF)")
-  set(INCLUDE_AUDIO_MODULE 0)
+  set(RAYLIB_MODULE_AUDIO 0)
   list(REMOVE_ITEM raylib_sources ${CMAKE_CURRENT_SOURCE_DIR}/raudio.c)
   set(sources ${raylib_sources})
 endif()
@@ -189,6 +188,13 @@ if(SHARED)
       PUBLIC ${GRAPHICS}
   )
 
+  if(MSVC)
+    target_compile_definitions(raylib
+      PRIVATE $<BUILD_INTERFACE:BUILD_LIBTYPE_SHARED>
+      INTERFACE $<INSTALL_INTERFACE:USE_LIBTYPE_SHARED>
+    )
+  endif()
+
   set(PKG_CONFIG_LIBS_EXTRA "")
 
   set_property(TARGET raylib PROPERTY POSITION_INDEPENDENT_CODE ON)
@@ -215,7 +221,9 @@ if(SHARED)
   if (WIN32)
     install(
       TARGETS raylib
-      RUNTIME DESTINATION "lib"
+      ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+      LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+      RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
       PUBLIC_HEADER DESTINATION "include"
     )
   else()

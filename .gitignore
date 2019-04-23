@@ -49,6 +49,7 @@ ipch/
 # Ignore compiled binaries
 *.o
 *.exe
+*.a
 !raylib.rc.o
 
 # Ignore all examples files
@@ -132,3 +133,4 @@ templates/android_project/output
 GPATH
 GRTAGS
 GTAGS
+.vs

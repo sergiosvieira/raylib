@@ -2,7 +2,7 @@
 #
 #   raylib makefile for Desktop platforms, Raspberry Pi, Android and HTML5
 #
-#   Copyright (c) 2013-2018 Ramon Santamaria (@raysan5)
+#   Copyright (c) 2013-2019 Ramon Santamaria (@raysan5)
 #
 #   This software is provided "as-is", without any express or implied warranty. In no event
 #   will the authors be held liable for any damages arising from the use of this software.
@@ -25,7 +25,7 @@
 
 # Define required raylib variables
 PROJECT_NAME       ?= raylib_examples
-RAYLIB_VERSION     ?= 2.0.0
+RAYLIB_VERSION     ?= 2.5.0
 RAYLIB_API_VERSION ?= 1
 RAYLIB_PATH        ?= ..
 
@@ -118,8 +118,8 @@ endif
 ifeq ($(PLATFORM),PLATFORM_WEB)
     # Emscripten required variables
     EMSDK_PATH          = C:/emsdk
-    EMSCRIPTEN_VERSION  = 1.38.21
-    CLANG_VERSION       = e1.38.21_64bit
+    EMSCRIPTEN_VERSION  = 1.38.30
+    CLANG_VERSION       = e1.38.30_64bit
     PYTHON_VERSION      = 2.7.13.1_64bit\python-2.7.13.amd64
     NODE_VERSION        = 8.9.1_64bit
     export PATH         = $(EMSDK_PATH);$(EMSDK_PATH)\clang\$(CLANG_VERSION);$(EMSDK_PATH)\node\$(NODE_VERSION)\bin;$(EMSDK_PATH)\python\$(PYTHON_VERSION);$(EMSDK_PATH)\emscripten\$(EMSCRIPTEN_VERSION);C:\raylib\MinGW\bin:$$(PATH)
@@ -249,7 +249,8 @@ ifeq ($(PLATFORM),PLATFORM_WEB)
     # -s EMTERPRETIFY_ASYNC=1    # support synchronous loops by emterpreter
     # --profiling                # include information for code profiling
     # --preload-file resources   # specify a resources folder for data compilation
-    CFLAGS += -Os -s USE_GLFW=3 -s ASSERTIONS=1 -s WASM=1 -s EMTERPRETIFY=1 -s EMTERPRETIFY_ASYNC=1
+    CFLAGS += -Os -s USE_GLFW=3 -s ASSERTIONS=2 -s WASM=1
+    #  -Os -s WASM=1 -s EMTERPRETIFY=1 -s EMTERPRETIFY_ASYNC=1
     
     # NOTE: Simple raylib examples are compiled to be interpreter by emterpreter, that way,
     # we can compile same code for ALL platforms with no change required, but, working on bigger
@@ -377,7 +378,7 @@ EXAMPLES = \
     core/core_2d_camera \
     core/core_world_screen \
     core/core_vr_simulator \
-    core/core_multitouch \
+    core/core_input_multitouch \
     shapes/shapes_logo_raylib \
     shapes/shapes_basic_shapes \
     shapes/shapes_colors_palette \

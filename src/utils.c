@@ -11,7 +11,7 @@
 *
 *   LICENSE: zlib/libpng
 *
-*   Copyright (c) 2014-2018 Ramon Santamaria (@raysan5)
+*   Copyright (c) 2014-2019 Ramon Santamaria (@raysan5)
 *
 *   This software is provided "as-is", without any express or implied warranty. In no event
 *   will the authors be held liable for any damages arising from the use of this software.
@@ -30,9 +30,13 @@
 *
 **********************************************************************************************/
 
-#include "config.h"
-
 #include "raylib.h"                     // WARNING: Required for: LogType enum
+
+// Check if config flags have been externally provided on compilation line
+#if !defined(EXTERNAL_CONFIG_FLAGS)
+    #include "config.h"         // Defines module configuration flags
+#endif
+
 #include "utils.h"
 
 #if defined(PLATFORM_ANDROID)
@@ -41,10 +45,10 @@
     #include <android/asset_manager.h>  // Required for: Android assets manager: AAsset, AAssetManager_open(), ...
 #endif
 
-#include <stdlib.h>                     // Required for: malloc(), free()
-#include <stdio.h>                      // Required for: fopen(), fclose(), fputc(), fwrite(), printf(), fprintf(), funopen()
+#include <stdlib.h>                     // Required for: exit()
+#include <stdio.h>                      // Required for: printf(), sprintf()
 #include <stdarg.h>                     // Required for: va_list, va_start(), vfprintf(), va_end()
-#include <string.h>                     // Required for: strlen(), strrchr(), strcmp()
+#include <string.h>                     // Required for: strcpy(), strcat()
 
 #define MAX_TRACELOG_BUFFER_SIZE   128  // Max length of one trace-log message
 
@@ -119,7 +123,7 @@ void TraceLog(int logType, const char *text, ...)
     {
         case LOG_TRACE: __android_log_vprint(ANDROID_LOG_VERBOSE, "raylib", text, args); break;
         case LOG_DEBUG: __android_log_vprint(ANDROID_LOG_DEBUG, "raylib", text, args); break;
-        case LOG_INFO: __android_log_vprint(ANDROID_LOG_INFO, "raylib", text, args); ; break;
+        case LOG_INFO: __android_log_vprint(ANDROID_LOG_INFO, "raylib", text, args); break;
         case LOG_WARNING: __android_log_vprint(ANDROID_LOG_WARN, "raylib", text, args); break;
         case LOG_ERROR: __android_log_vprint(ANDROID_LOG_ERROR, "raylib", text, args); break;
         case LOG_FATAL: __android_log_vprint(ANDROID_LOG_FATAL, "raylib", text, args); break;
@@ -132,8 +136,8 @@ void TraceLog(int logType, const char *text, ...)
     {
         case LOG_TRACE: strcpy(buffer, "TRACE: "); break;
         case LOG_DEBUG: strcpy(buffer, "DEBUG: "); break;
-        case LOG_INFO: strcpy(buffer, "INFO: "); ; break;
-        case LOG_WARNING: strcpy(buffer, "WARN: "); break;
+        case LOG_INFO: strcpy(buffer, "INFO: "); break;
+        case LOG_WARNING: strcpy(buffer, "WARNING: "); break;
         case LOG_ERROR: strcpy(buffer, "ERROR: "); break;
         case LOG_FATAL: strcpy(buffer, "FATAL: "); break;
         default: break;
