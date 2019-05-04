@@ -47,6 +47,9 @@
 *   #define SUPPORT_MOUSE_GESTURES
 *       Mouse gestures are directly mapped like touches and processed by gestures system.
 *
+*   #define SUPPORT_TOUCH_AS_MOUSE
+*       Touch input and mouse input are shared. Mouse functions also return touch information.
+*
 *   #define SUPPORT_BUSY_WAIT_LOOP
 *       Use busy wait loop for timing sync, if not defined, a high-resolution timer is setup and used
 *
@@ -58,6 +61,10 @@
 *
 *   #define SUPPORT_GIF_RECORDING
 *       Allow automatic gif recording of current screen pressing CTRL+F12, defined in KeyCallback()
+*
+*   #define SUPPORT_HIGH_DPI
+*       Allow scale all the drawn content to match the high-DPI equivalent size (only PLATFORM_DESKTOP)
+*       NOTE: This flag is forced on macOS, since most displays are high-DPI
 *
 *   DEPENDENCIES:
 *       rglfw    - Manage graphic device, OpenGL context and inputs on PLATFORM_DESKTOP (Windows, Linux, OSX. FreeBSD, OpenBSD, NetBSD, DragonFly)
@@ -122,6 +129,10 @@
 #if defined(SUPPORT_GIF_RECORDING)
     #define RGIF_IMPLEMENTATION
     #include "external/rgif.h"  // Support GIF recording
+#endif
+
+#if defined(__APPLE__)
+    #define SUPPORT_HIGH_DPI    // Force HighDPI support on macOS
 #endif
 
 #include <stdio.h>          // Standard input / output lib
@@ -437,7 +448,7 @@ extern void UnloadDefaultFont(void);        // [Module: text] Unloads default fo
 //----------------------------------------------------------------------------------
 static bool InitGraphicsDevice(int width, int height);  // Initialize graphics device
 static void SetupFramebuffer(int width, int height);    // Setup main framebuffer
-static void SetupViewport(void);                        // Set viewport parameters
+static void SetupViewport(int width, int height);       // Set viewport for a provided width and height
 static void SwapBuffers(void);                          // Copy back buffer to front buffers
 
 static void InitTimer(void);                            // Initialize timer
@@ -1175,6 +1186,7 @@ void BeginMode2D(Camera2D camera)
     rlglDraw();                         // Draw Buffers (Only OpenGL 3+ and ES2)
 
     rlLoadIdentity();                   // Reset current matrix (MODELVIEW)
+    rlMultMatrixf(MatrixToFloat(screenScaling)); // Apply screen scaling if required
 
     // Camera rotation and scaling is always relative to target
     Matrix matOrigin = MatrixTranslate(-camera.target.x, -camera.target.y, 0.0f);
@@ -1193,6 +1205,7 @@ void EndMode2D(void)
     rlglDraw();                         // Draw Buffers (Only OpenGL 3+ and ES2)
 
     rlLoadIdentity();                   // Reset current matrix (MODELVIEW)
+    rlMultMatrixf(MatrixToFloat(screenScaling)); // Apply screen scaling if required
 }
 
 // Initializes 3D mode with custom camera (3D)
@@ -1246,6 +1259,8 @@ void EndMode3D(void)
     rlMatrixMode(RL_MODELVIEW);         // Get back to modelview matrix
     rlLoadIdentity();                   // Reset current matrix (MODELVIEW)
 
+    rlMultMatrixf(MatrixToFloat(screenScaling)); // Apply screen scaling if required
+
     rlDisableDepthTest();               // Disable DEPTH_TEST for 2D
 }
 
@@ -1284,19 +1299,9 @@ void EndTextureMode(void)
 
     rlDisableRenderTexture();           // Disable render target
 
-    // Set viewport to default framebuffer size (screen size)
-    SetupViewport();
-
-    rlMatrixMode(RL_PROJECTION);        // Switch to PROJECTION matrix
-    rlLoadIdentity();                   // Reset current matrix (PROJECTION)
-
-    // Set orthographic projection to current framebuffer size
-    // NOTE: Configured top-left corner as (0, 0)
-    rlOrtho(0, GetScreenWidth(), GetScreenHeight(), 0, 0.0f, 1.0f);
-
-    rlMatrixMode(RL_MODELVIEW);         // Switch back to MODELVIEW matrix
-    rlLoadIdentity();                   // Reset current matrix (MODELVIEW)
-
+    // Set viewport to default framebuffer size
+    SetupViewport(renderWidth, renderHeight);
+    
     // Reset current screen size
     currentWidth = GetScreenWidth();
     currentHeight = GetScreenHeight();
@@ -2157,6 +2162,11 @@ bool IsMouseButtonPressed(int button)
     if ((currentMouseState[button] != previousMouseState[button]) && (currentMouseState[button] == 1)) pressed = true;
 #endif
 
+#if defined(PLATFORM_WEB)
+    Vector2 pos = GetTouchPosition(0);
+    if ((pos.x > 0) && (pos.y > 0)) pressed = true;    // There was a touch!
+#endif
+
     return pressed;
 }
 
@@ -2221,11 +2231,21 @@ int GetMouseY(void)
 // Returns mouse position XY
 Vector2 GetMousePosition(void)
 {
+    Vector2 position = { 0.0f, 0.0f };
+
 #if defined(PLATFORM_ANDROID)
-    return GetTouchPosition(0);
+    position = GetTouchPosition(0);
 #else
-    return (Vector2){ (mousePosition.x + mouseOffset.x)*mouseScale.x, (mousePosition.y + mouseOffset.y)*mouseScale.y };
+    position = (Vector2){ (mousePosition.x + mouseOffset.x)*mouseScale.x, (mousePosition.y + mouseOffset.y)*mouseScale.y };
 #endif
+#if defined(PLATFORM_WEB)
+    Vector2 pos = GetTouchPosition(0);
+    
+    // Touch position has priority over mouse position
+    if ((pos.x > 0) && (pos.y > 0)) position = pos; // There was a touch!
+#endif
+
+    return position;
 }
 
 // Set mouse position XY
@@ -2336,11 +2356,10 @@ static bool InitGraphicsDevice(int width, int height)
     currentWidth = width;
     currentHeight = height;
 
+    screenScaling = MatrixIdentity();   // No draw scaling required by default
+
     // NOTE: Framebuffer (render area - renderWidth, renderHeight) could include black bars...
     // ...in top-down or left-right to match display aspect ratio (no weird scalings)
-
-    // Screen scaling matrix is required in case desired screen area is different than display area
-    screenScaling = MatrixIdentity();
 
 #if defined(PLATFORM_DESKTOP) || defined(PLATFORM_WEB)
     glfwSetErrorCallback(ErrorCallback);
@@ -2388,7 +2407,7 @@ static bool InitGraphicsDevice(int width, int height)
     //glfwWindowHint(GLFW_REFRESH_RATE, 0);         // Refresh rate for fullscreen window
     //glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_API); // OpenGL API to use. Alternative: GLFW_OPENGL_ES_API
     //glfwWindowHint(GLFW_AUX_BUFFERS, 0);          // Number of auxiliar buffers
-#if defined(PLATFORM_DESKTOP)
+#if defined(PLATFORM_DESKTOP) && defined(SUPPORT_HIGH_DPI)
     // NOTE: If using external GLFW, it requires latest GLFW 3.3 for this functionality
     glfwWindowHint(GLFW_SCALE_TO_MONITOR, GLFW_TRUE);   // Scale content area based on the monitor content scale where window is placed on
 #endif
@@ -2468,9 +2487,11 @@ static bool InitGraphicsDevice(int width, int height)
         // framebuffer is rendered correctly but once displayed on a 16:9 monitor, it gets stretched
         // by the sides to fit all monitor space...
 
-        // At this point we need to manage render size vs screen size
-        // NOTE: This function uses and modifies global module variables:
-        //       screenWidth/screenHeight - renderWidth/renderHeight - screenScaling
+        // Try to setup the most appropiate fullscreen framebuffer for the requested screenWidth/screenHeight
+        // It considers device display resolution mode and setups a framebuffer with black bars if required (render size/offset)
+        // Modified global variables: screenWidth/screenHeight - renderWidth/renderHeight - renderOffsetX/renderOffsetY - screenScaling
+        // TODO: It is a quite cumbersome solution to display size vs requested size, it should be reviewed or removed...
+        // HighDPI monitors are properly considered in a following similar function: SetupViewport()
         SetupFramebuffer(displayWidth, displayHeight);
 
         window = glfwCreateWindow(displayWidth, displayHeight, windowTitle, glfwGetPrimaryMonitor(), NULL);
@@ -2494,12 +2515,6 @@ static bool InitGraphicsDevice(int width, int height)
             if (windowPosY < 0) windowPosY = 0;
 
             glfwSetWindowPos(window, windowPosX, windowPosY);
-
-            // Get window HiDPI scaling factor
-            float scaleRatio = 0.0f;
-            glfwGetWindowContentScale(window, &scaleRatio, NULL);
-            scaleRatio = roundf(scaleRatio);
-            //screenScaling = MatrixScale(scaleRatio, scaleRatio, scaleRatio);
 #endif
             renderWidth = screenWidth;
             renderHeight = screenHeight;
@@ -2886,23 +2901,23 @@ static bool InitGraphicsDevice(int width, int height)
     }
 #endif // PLATFORM_ANDROID || PLATFORM_RPI
 
-    renderWidth = screenWidth;
-    renderHeight = screenHeight;
-
     // Initialize OpenGL context (states and resources)
-    // NOTE: screenWidth and screenHeight not used, just stored as globals
+    // NOTE: screenWidth and screenHeight not used, just stored as globals in rlgl
     rlglInit(screenWidth, screenHeight);
 
-    // Setup default viewport
-    SetupViewport();
+    int fbWidth = renderWidth;
+    int fbHeight = renderHeight;
 
-    // Initialize internal projection and modelview matrices
-    // NOTE: Default to orthographic projection mode with top-left corner at (0,0)
-    rlMatrixMode(RL_PROJECTION);                // Switch to PROJECTION matrix
-    rlLoadIdentity();                           // Reset current matrix (PROJECTION)
-    rlOrtho(0, renderWidth - renderOffsetX, renderHeight - renderOffsetY, 0, 0.0f, 1.0f);
-    rlMatrixMode(RL_MODELVIEW);                 // Switch back to MODELVIEW matrix
-    rlLoadIdentity();                           // Reset current matrix (MODELVIEW)
+#if defined(PLATFORM_DESKTOP) && defined(SUPPORT_HIGH_DPI)
+    glfwGetFramebufferSize(window, &fbWidth, &fbHeight);
+
+    // Screen scaling matrix is required in case desired screen area is different than display area
+    screenScaling = MatrixScale((float)fbWidth/screenWidth, (float)fbHeight/screenHeight, 1.0f);
+    SetMouseScale((float)screenWidth/fbWidth, (float)screenHeight/fbHeight);
+#endif  // PLATFORM_DESKTOP && SUPPORT_HIGH_DPI
+
+    // Setup default viewport
+    SetupViewport(fbWidth, fbHeight);
 
     ClearBackground(RAYWHITE);      // Default background color for raylib games :P
 
@@ -2912,21 +2927,26 @@ static bool InitGraphicsDevice(int width, int height)
     return true;
 }
 
-// Set viewport parameters
-static void SetupViewport(void)
+// Set viewport for a provided width and height
+static void SetupViewport(int width, int height)
 {
-#if defined(__APPLE__)
-    // Get framebuffer size of current window
-    // NOTE: Required to handle HighDPI display correctly on OSX because framebuffer is automatically reasized to adapt to new DPI.
-    // When OS does that, it can be detected using GLFW3 callback: glfwSetFramebufferSizeCallback()
-    int fbWidth, fbHeight;
-    glfwGetFramebufferSize(window, &fbWidth, &fbHeight);
-    rlViewport(renderOffsetX/2, renderOffsetY/2, fbWidth - renderOffsetX, fbHeight - renderOffsetY);
-#else
-    // Initialize screen viewport (area of the screen that you will actually draw to)
-    // NOTE: Viewport must be recalculated if screen is resized
+    renderWidth = width;
+    renderHeight = height;
+    
+    // Set viewport width and height
+    // NOTE: We consider render size and offset in case black bars are required and
+    // render area does not match full display area (this situation is only applicable on fullscreen mode)
     rlViewport(renderOffsetX/2, renderOffsetY/2, renderWidth - renderOffsetX, renderHeight - renderOffsetY);
-#endif
+
+    rlMatrixMode(RL_PROJECTION);        // Switch to PROJECTION matrix
+    rlLoadIdentity();                   // Reset current matrix (PROJECTION)
+
+    // Set orthographic projection to current framebuffer size
+    // NOTE: Configured top-left corner as (0, 0)
+    rlOrtho(0, renderWidth, renderHeight, 0, 0.0f, 1.0f); 
+
+    rlMatrixMode(RL_MODELVIEW);         // Switch back to MODELVIEW matrix
+    rlLoadIdentity();                   // Reset current matrix (MODELVIEW)
 }
 
 // Compute framebuffer size relative to screen size and display size
@@ -2959,7 +2979,7 @@ static void SetupFramebuffer(int width, int height)
 
         // Screen scaling required
         float scaleRatio = (float)renderWidth/(float)screenWidth;
-        screenScaling = MatrixScale(scaleRatio, scaleRatio, scaleRatio);
+        screenScaling = MatrixScale(scaleRatio, scaleRatio, 1.0f);
 
         // NOTE: We render to full display resolution!
         // We just need to calculate above parameters for downscale matrix and offsets
@@ -3027,6 +3047,7 @@ static void InitTimer(void)
 // NOTE: Sleep() granularity could be around 10 ms, it means, Sleep() could
 // take longer than expected... for that reason we use the busy wait loop
 // http://stackoverflow.com/questions/43057578/c-programming-win32-games-sleep-taking-longer-than-expected
+// http://www.geisswerks.com/ryan/FAQS/timing.html --> All about timming on Win32!
 static void Wait(float ms)
 {
 #if defined(SUPPORT_BUSY_WAIT_LOOP) && !defined(PLATFORM_UWP)
@@ -3705,25 +3726,14 @@ static void CursorEnterCallback(GLFWwindow *window, int enter)
 // NOTE: Window resizing not allowed by default
 static void WindowSizeCallback(GLFWwindow *window, int width, int height)
 {
-    // If window is resized, viewport and projection matrix needs to be re-calculated
-    rlViewport(0, 0, width, height);            // Set viewport width and height
-    rlMatrixMode(RL_PROJECTION);                // Switch to PROJECTION matrix
-    rlLoadIdentity();                           // Reset current matrix (PROJECTION)
-    rlOrtho(0, width, height, 0, 0.0f, 1.0f);   // Orthographic projection mode with top-left corner at (0,0)
-    rlMatrixMode(RL_MODELVIEW);                 // Switch back to MODELVIEW matrix
-    rlLoadIdentity();                           // Reset current matrix (MODELVIEW)
-    rlClearScreenBuffers();                     // Clear screen buffers (color and depth)
+    SetupViewport(width, height);    // Reset viewport and projection matrix for new size
 
-    // Window size must be updated to be used on 3D mode to get new aspect ratio (BeginMode3D())
-    // NOTE: Be careful! GLFW3 will choose the closest fullscreen resolution supported by current monitor,
-    // for example, if reescaling back to 800x450 (desired), it could set 720x480 (closest fullscreen supported)
+    // Set current screen size
     screenWidth = width;
     screenHeight = height;
-    renderWidth = width;
-    renderHeight = height;
     currentWidth = width;
     currentHeight = height;
-
+    
     // NOTE: Postprocessing texture is not scaled to new size
 
     windowResized = true;
