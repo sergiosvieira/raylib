@@ -1,7 +1,8 @@
 cmake_minimum_required(VERSION 3.11) # FetchContent is available in 3.11+
 project(example)
-
-find_package(raylib 2.0 QUIET) # Let CMake search for a raylib-config.cmake
+message("Prefix Path" ${CMAKE_PREFIX_PATH})
+message("Module Path" ${CMAKE_MODULE_PATH})
+find_package(raylib 2.0) # Let CMake search for a raylib-config.cmake
 
 # You could change the QUIET above to REQUIRED and remove this if() clause
 # This part downloads raylib and builds it if it's not installed on your system
