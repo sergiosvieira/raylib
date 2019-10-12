@@ -2,7 +2,7 @@
 *
 *   raylib example - loading thread
 *
-*   NOTE: This example requires linking with pthreads library, 
+*   NOTE: This example requires linking with pthreads library,
 *   on MinGW, it can be accomplished passing -static parameter to compiler
 *
 *   This example has been created using raylib 2.5 (www.raylib.com)
@@ -16,28 +16,32 @@
 
 #include "pthread.h"                        // POSIX style threads management
 
-#include <time.h>                           // Required for clock() function
+#include <stdatomic.h>                      // C11 atomic data types
 
-static bool dataLoaded = false;             // Loading data semaphore
+#include <time.h>                           // Required for: clock()
+
+// Using C11 atomics for synchronization
+// NOTE: A plain bool (or any plain data type for that matter) can't be used for inter-thread synchronization
+static atomic_bool dataLoaded = ATOMIC_VAR_INIT(false); // Data Loaded completion indicator
 static void *LoadDataThread(void *arg);     // Loading data thread function declaration
 
 static int dataProgress = 0;                // Data progress accumulator
 
-int main()
+int main(void)
 {
     // Initialization
     //--------------------------------------------------------------------------------------
-    int screenWidth = 800;
-    int screenHeight = 450;
+    const int screenWidth = 800;
+    const int screenHeight = 450;
 
     InitWindow(screenWidth, screenHeight, "raylib [core] example - loading thread");
-    
+
     pthread_t threadId;             // Loading data thread id
 
-    int state = 0;                  // 0-Waiting, 1-Loading, 2-Finished
+    enum { STATE_WAITING, STATE_LOADING, STATE_FINISHED } state = STATE_WAITING;
     int framesCounter = 0;
 
-    SetTargetFPS(60);
+    SetTargetFPS(60);               // Set our game to run at 60 frames-per-second
     //--------------------------------------------------------------------------------------
 
     // Main game loop
@@ -45,35 +49,39 @@ int main()
     {
         // Update
         //----------------------------------------------------------------------------------
-        if (state == 0)
+        switch (state)
         {
-            if (IsKeyPressed(KEY_ENTER))
+            case STATE_WAITING:
             {
-                int error = pthread_create(&threadId, NULL, &LoadDataThread, NULL);
-                if (error != 0) TraceLog(LOG_ERROR, "Error creating loading thread");
-                else TraceLog(LOG_INFO, "Loading thread initialized successfully");
-                
-                state = 1;
-            }
-        }
-        else if (state == 1)
-        {
-            framesCounter++;
-            if (dataLoaded) 
+                if (IsKeyPressed(KEY_ENTER))
+                {
+                    int error = pthread_create(&threadId, NULL, &LoadDataThread, NULL);
+                    if (error != 0) TraceLog(LOG_ERROR, "Error creating loading thread");
+                    else TraceLog(LOG_INFO, "Loading thread initialized successfully");
+
+                    state = STATE_LOADING;
+                }
+            } break;
+            case STATE_LOADING:
             {
-                framesCounter = 0;
-                state = 2;
-            }
-        }
-        else if (state == 2)
-        {
-            if (IsKeyPressed(KEY_ENTER)) 
+                framesCounter++;
+                if (atomic_load(&dataLoaded))
+                {
+                    framesCounter = 0;
+                    state = STATE_FINISHED;
+                }
+            } break;
+            case STATE_FINISHED:
             {
-                // Reset everything to launch again
-                dataLoaded = false;
-                dataProgress = 0;
-                state = 0;
-            }
+                if (IsKeyPressed(KEY_ENTER))
+                {
+                    // Reset everything to launch again
+                    atomic_store(&dataLoaded, false);
+                    dataProgress = 0;
+                    state = STATE_WAITING;
+                }
+            } break;
+            default: break;
         }
         //----------------------------------------------------------------------------------
 
@@ -82,19 +90,25 @@ int main()
         BeginDrawing();
 
             ClearBackground(RAYWHITE);
-            
-            if (state == 0) DrawText("PRESS ENTER to START LOADING DATA", 150, 170, 20, DARKGRAY);
-            else if (state == 1) 
-            { 
-                DrawRectangle(150, 200, dataProgress, 60, SKYBLUE);
-                if ((framesCounter/15)%2) DrawText("LOADING DATA...", 240, 210, 40, DARKBLUE);
-            }
-            else if (state == 2) 
+
+            switch (state)
             {
-                DrawRectangle(150, 200, 500, 60, LIME);
-                DrawText("DATA LOADED!", 250, 210, 40, GREEN);
+                case STATE_WAITING: DrawText("PRESS ENTER to START LOADING DATA", 150, 170, 20, DARKGRAY); break;
+                case STATE_LOADING:
+                {
+                    DrawRectangle(150, 200, dataProgress, 60, SKYBLUE);
+                    if ((framesCounter/15)%2) DrawText("LOADING DATA...", 240, 210, 40, DARKBLUE);
+
+                } break;
+                case STATE_FINISHED:
+                {
+                    DrawRectangle(150, 200, 500, 60, LIME);
+                    DrawText("DATA LOADED!", 250, 210, 40, GREEN);
+
+                } break;
+                default: break;
             }
-            
+
             DrawRectangleLines(150, 200, 500, 60, DARKGRAY);
 
         EndDrawing();
@@ -116,18 +130,18 @@ static void *LoadDataThread(void *arg)
     clock_t prevTime = clock();     // Previous time
 
     // We simulate data loading with a time counter for 5 seconds
-    while (timeCounter < 5000) 
+    while (timeCounter < 5000)
     {
         clock_t currentTime = clock() - prevTime;
         timeCounter = currentTime*1000/CLOCKS_PER_SEC;
-        
+
         // We accumulate time over a global variable to be used in
         // main thread as a progress bar
         dataProgress = timeCounter/10;
     }
 
     // When data has finished loading, we set global variable
-    dataLoaded = true;
+    atomic_store(&dataLoaded, true);
 
     return NULL;
 }
