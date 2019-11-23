@@ -504,7 +504,8 @@ RLAPI bool rlRenderTextureComplete(RenderTexture target);                 // Ver
 
 // Vertex data management
 RLAPI void rlLoadMesh(Mesh *mesh, bool dynamic);                          // Upload vertex data into GPU and provided VAO/VBO ids
-RLAPI void rlUpdateMesh(Mesh mesh, int buffer, int numVertex);            // Update vertex data on GPU (upload new data to one buffer)
+RLAPI void rlUpdateMesh(Mesh mesh, int buffer, int num);                  // Update vertex or index data on GPU (upload new data to one buffer)
+RLAPI void rlUpdateMeshAt(Mesh mesh, int buffer, int num, int index);     // Update vertex or index data on GPU, at index
 RLAPI void rlDrawMesh(Mesh mesh, Material material, Matrix transform);    // Draw a 3d mesh with material and transform
 RLAPI void rlUnloadMesh(Mesh mesh);                                       // Unload mesh data from CPU and GPU
 
@@ -2471,7 +2472,7 @@ void rlLoadMesh(Mesh *mesh, bool dynamic)
     {
         glGenBuffers(1, &mesh->vboId[6]);
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh->vboId[6]);
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(unsigned short)*mesh->triangleCount*3, mesh->indices, GL_STATIC_DRAW);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(unsigned short)*mesh->triangleCount*3, mesh->indices, drawHint);
     }
 
     if (vaoSupported)
@@ -2509,8 +2510,16 @@ unsigned int rlLoadAttribBuffer(unsigned int vaoId, int shaderLoc, void *buffer,
     return id;
 }
 
-// Update vertex data on GPU (upload new data to one buffer)
-void rlUpdateMesh(Mesh mesh, int buffer, int numVertex)
+// Update vertex or index data on GPU (upload new data to one buffer)
+void rlUpdateMesh(Mesh mesh, int buffer, int num)
+{
+    rlUpdateMeshAt(mesh, buffer, num, 0);
+}
+
+// Update vertex or index data on GPU, at index
+// WARNING: error checking is in place that will cause the data to not be
+//          updated if offset + size exceeds what the buffer can hold
+void rlUpdateMeshAt(Mesh mesh, int buffer, int num, int index)
 {
 #if defined(GRAPHICS_API_OPENGL_33) || defined(GRAPHICS_API_OPENGL_ES2)
     // Activate mesh VAO
@@ -2521,42 +2530,60 @@ void rlUpdateMesh(Mesh mesh, int buffer, int numVertex)
         case 0:     // Update vertices (vertex position)
         {
             glBindBuffer(GL_ARRAY_BUFFER, mesh.vboId[0]);
-            if (numVertex >= mesh.vertexCount) glBufferData(GL_ARRAY_BUFFER, sizeof(float)*3*numVertex, mesh.vertices, GL_DYNAMIC_DRAW);
-            else glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(float)*3*numVertex, mesh.vertices);
+            if (index == 0 && num >= mesh.vertexCount) glBufferData(GL_ARRAY_BUFFER, sizeof(float)*3*num, mesh.vertices, GL_DYNAMIC_DRAW);
+            else if (index + num >= mesh.vertexCount) break;
+            else glBufferSubData(GL_ARRAY_BUFFER, sizeof(float)*3*index, sizeof(float)*3*num, mesh.vertices);
 
         } break;
         case 1:     // Update texcoords (vertex texture coordinates)
         {
             glBindBuffer(GL_ARRAY_BUFFER, mesh.vboId[1]);
-            if (numVertex >= mesh.vertexCount) glBufferData(GL_ARRAY_BUFFER, sizeof(float)*2*numVertex, mesh.texcoords, GL_DYNAMIC_DRAW);
-            else glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(float)*2*numVertex, mesh.texcoords);
+            if (index == 0 && num >= mesh.vertexCount) glBufferData(GL_ARRAY_BUFFER, sizeof(float)*2*num, mesh.texcoords, GL_DYNAMIC_DRAW);
+            else if (index + num >= mesh.vertexCount) break;
+            else glBufferSubData(GL_ARRAY_BUFFER, sizeof(float)*2*index, sizeof(float)*2*num, mesh.texcoords);
 
         } break;
         case 2:     // Update normals (vertex normals)
         {
             glBindBuffer(GL_ARRAY_BUFFER, mesh.vboId[2]);
-            if (numVertex >= mesh.vertexCount) glBufferData(GL_ARRAY_BUFFER, sizeof(float)*3*numVertex, mesh.normals, GL_DYNAMIC_DRAW);
-            else glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(float)*3*numVertex, mesh.normals);
+            if (index == 0 && num >= mesh.vertexCount) glBufferData(GL_ARRAY_BUFFER, sizeof(float)*3*num, mesh.normals, GL_DYNAMIC_DRAW);
+            else if (index + num >= mesh.vertexCount) break;
+            else glBufferSubData(GL_ARRAY_BUFFER, sizeof(float)*3*index, sizeof(float)*3*num, mesh.normals);
 
         } break;
         case 3:     // Update colors (vertex colors)
         {
             glBindBuffer(GL_ARRAY_BUFFER, mesh.vboId[3]);
-            if (numVertex >= mesh.vertexCount) glBufferData(GL_ARRAY_BUFFER, sizeof(float)*4*numVertex, mesh.colors, GL_DYNAMIC_DRAW);
-            else glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(unsigned char)*4*numVertex, mesh.colors);
+            if (index == 0 && num >= mesh.vertexCount) glBufferData(GL_ARRAY_BUFFER, sizeof(float)*4*num, mesh.colors, GL_DYNAMIC_DRAW);
+            else if (index + num >= mesh.vertexCount) break;
+            else glBufferSubData(GL_ARRAY_BUFFER, sizeof(unsigned char)*4*index, sizeof(unsigned char)*4*num, mesh.colors);
 
         } break;
         case 4:     // Update tangents (vertex tangents)
         {
             glBindBuffer(GL_ARRAY_BUFFER, mesh.vboId[4]);
-            if (numVertex >= mesh.vertexCount) glBufferData(GL_ARRAY_BUFFER, sizeof(float)*4*numVertex, mesh.tangents, GL_DYNAMIC_DRAW);
-            else glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(float)*4*numVertex, mesh.tangents);
+            if (index == 0 && num >= mesh.vertexCount) glBufferData(GL_ARRAY_BUFFER, sizeof(float)*4*num, mesh.tangents, GL_DYNAMIC_DRAW);
+            else if (index + num >= mesh.vertexCount) break;
+            else glBufferSubData(GL_ARRAY_BUFFER, sizeof(float)*4*index, sizeof(float)*4*num, mesh.tangents);
         } break;
         case 5:     // Update texcoords2 (vertex second texture coordinates)
         {
             glBindBuffer(GL_ARRAY_BUFFER, mesh.vboId[5]);
-            if (numVertex >= mesh.vertexCount) glBufferData(GL_ARRAY_BUFFER, sizeof(float)*2*numVertex, mesh.texcoords2, GL_DYNAMIC_DRAW);
-            else glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(float)*2*numVertex, mesh.texcoords2);
+            if (index == 0 && num >= mesh.vertexCount) glBufferData(GL_ARRAY_BUFFER, sizeof(float)*2*num, mesh.texcoords2, GL_DYNAMIC_DRAW);
+            else if (index + num >= mesh.vertexCount) break;
+            else glBufferSubData(GL_ARRAY_BUFFER, sizeof(float)*2*index, sizeof(float)*2*num, mesh.texcoords2);
+        } break;
+        case 6:     // Update indices (triangle index buffer)
+        {
+            // the * 3 is because each triangle has 3 indices
+            unsigned short *indices = mesh.indices;
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh.vboId[6]);
+            if (index == 0 && num >= mesh.triangleCount)
+                glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(*indices)*num*3, indices, GL_DYNAMIC_DRAW);
+            else if (index + num >= mesh.triangleCount)
+                break;
+            else
+                glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, sizeof(*indices)*index*3, sizeof(*indices)*num*3, indices);
         } break;
         default: break;
     }
@@ -2967,7 +2994,7 @@ char *LoadText(const char *fileName)
 Shader LoadShader(const char *vsFileName, const char *fsFileName)
 {
     Shader shader = { 0 };
-    
+
     // NOTE: Shader.locs is allocated by LoadShaderCode()
 
     char *vShaderStr = NULL;
@@ -3155,6 +3182,23 @@ void SetMatrixProjection(Matrix proj)
 #endif
 }
 
+// Return internal projection matrix
+Matrix GetMatrixProjection(void) {
+#if defined(GRAPHICS_API_OPENGL_11)
+    float mat[16];
+    glGetFloatv(GL_PROJECTION_MATRIX,mat);
+    Matrix m;
+    m.m0  = mat[0];     m.m1  = mat[1];     m.m2  = mat[2];     m.m3  = mat[3];
+    m.m4  = mat[4];     m.m5  = mat[5];     m.m6  = mat[6];     m.m7  = mat[7];
+    m.m8  = mat[8];     m.m9  = mat[9];     m.m10 = mat[10];    m.m11 = mat[11];
+    m.m12 = mat[12];    m.m13 = mat[13];    m.m14 = mat[14];    m.m15 = mat[15];
+    return m;
+#else
+    return projection;
+#endif
+#
+}
+
 // Set a custom modelview matrix (replaces internal modelview matrix)
 void SetMatrixModelview(Matrix view)
 {
@@ -3170,6 +3214,10 @@ Matrix GetMatrixModelview(void)
 #if defined(GRAPHICS_API_OPENGL_11)
     float mat[16];
     glGetFloatv(GL_MODELVIEW_MATRIX, mat);
+    matrix.m0  = mat[0];     matrix.m1  = mat[1];     matrix.m2  = mat[2];     matrix.m3  = mat[3];
+    matrix.m4  = mat[4];     matrix.m5  = mat[5];     matrix.m6  = mat[6];     matrix.m7  = mat[7];
+    matrix.m8  = mat[8];     matrix.m9  = mat[9];     matrix.m10 = mat[10];    matrix.m11 = mat[11];
+    matrix.m12 = mat[12];    matrix.m13 = mat[13];    matrix.m14 = mat[14];    matrix.m15 = mat[15];
 #else
     matrix = modelview;
 #endif

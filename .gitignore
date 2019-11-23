@@ -30,6 +30,7 @@ Thumbs.db
 *.cache
 *.ilk
 *.log
+
 [Bb]in
 [Dd]ebug/
 [Dd]ebug.win32/
@@ -52,6 +53,7 @@ packages/
 *.exe
 *.a
 *.bc
+*.so
 !raylib.rc.o
 
 # Ignore all examples files
